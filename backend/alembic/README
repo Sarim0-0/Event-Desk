@@ -1,10 +1,15 @@
 EventDesk Alembic environment
 
-Run Alembic from the repository root with:
+From the repository root, run:
 
-    alembic -c backend/alembic.ini <command>
+    python -m alembic -c backend/alembic.ini <command>
 
-The database URL is loaded from the repository-root .env file. The model
-registry supplies the complete SQLAlchemy metadata for autogeneration.
+Alternatively, from the backend directory, run:
+
+    python -m alembic -c alembic.ini <command>
+
+The database URL is loaded from the repository-root .env file. Alembic imports
+Base from app.database.model_registry so every model is available to
+autogenerate.
 
 No revision is included in this setup phase.

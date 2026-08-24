@@ -8,7 +8,7 @@ from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import get_settings
-from app.db.model_registry import Base
+from app.database.model_registry import Base
 
 
 config = context.config
