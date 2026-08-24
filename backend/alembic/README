@@ -1,0 +1,10 @@
+EventDesk Alembic environment
+
+Run Alembic from the repository root with:
+
+    alembic -c backend/alembic.ini <command>
+
+The database URL is loaded from the repository-root .env file. The model
+registry supplies the complete SQLAlchemy metadata for autogeneration.
+
+No revision is included in this setup phase.

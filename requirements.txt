@@ -1,3 +1,5 @@
 fastapi
 alembic
-sqlalchemy
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
