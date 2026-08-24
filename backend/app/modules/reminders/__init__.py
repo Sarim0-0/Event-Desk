@@ -1,1 +1,0 @@
-"""Scheduled event-reminder models."""
