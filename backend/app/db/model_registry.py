@@ -7,7 +7,6 @@ from app.modules.bookings.models import Booking
 from app.modules.events.models import Category, Event, EventTag, Tag
 from app.modules.notifications.models import Notification
 from app.modules.rbac.models import Permission, Role, RolePermission
-from app.modules.reminders.models import Reminder
 from app.modules.reviews.models import Reply, Review
 from app.modules.users.models import User
 
@@ -21,7 +20,6 @@ __all__ = [
     "Notification",
     "Permission",
     "RefreshToken",
-    "Reminder",
     "Reply",
     "Review",
     "Role",

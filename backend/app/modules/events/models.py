@@ -23,7 +23,6 @@ from app.modules.events.enums import EventStatus
 if TYPE_CHECKING:
     from app.modules.bookings.models import Booking
     from app.modules.notifications.models import Notification
-    from app.modules.reminders.models import Reminder
     from app.modules.reviews.models import Review
     from app.modules.users.models import User
 
@@ -96,6 +95,10 @@ class Event(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=EventStatus.DRAFT,
         server_default=EventStatus.DRAFT.value,
     )
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     organizer: Mapped[User] = relationship(back_populates="organized_events")
     category: Mapped[Category | None] = relationship(back_populates="events")
@@ -114,13 +117,6 @@ class Event(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     notifications: Mapped[list[Notification]] = relationship(
         back_populates="related_event",
         foreign_keys="Notification.related_event_id",
-    )
-    reminder: Mapped[Reminder | None] = relationship(
-        back_populates="event",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        single_parent=True,
-        uselist=False,
     )
 
 
