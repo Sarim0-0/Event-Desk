@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     CheckConstraint,
@@ -12,33 +12,55 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
     String,
     Text,
+    UniqueConstraint,
+    Uuid,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
-from app.modules.events.enums import EventStatus
+from app.database.base import Base
+from app.models.enums import EventStatus
 
 if TYPE_CHECKING:
-    from app.modules.bookings.models import Booking
-    from app.modules.notifications.models import Notification
-    from app.modules.reviews.models import Review
-    from app.modules.users.models import User
+    from app.models.booking import Booking
+    from app.models.notification import Notification
+    from app.models.review import Review
+    from app.models.user import User
 
 
-class Category(UUIDPrimaryKeyMixin, Base):
+class Category(Base):
     __tablename__ = "categories"
+    __table_args__ = (
+        PrimaryKeyConstraint(name="pk_categories"),
+        UniqueConstraint("name", name="uq_categories_name"),
+    )
 
-    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
 
     events: Mapped[list[Event]] = relationship(back_populates="category")
 
 
-class Tag(UUIDPrimaryKeyMixin, Base):
+class Tag(Base):
     __tablename__ = "tags"
+    __table_args__ = (
+        PrimaryKeyConstraint(name="pk_tags"),
+        UniqueConstraint("name", name="uq_tags_name"),
+    )
 
-    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
 
     event_tags: Mapped[list[EventTag]] = relationship(
         back_populates="tag",
@@ -52,24 +74,47 @@ class Tag(UUIDPrimaryKeyMixin, Base):
     )
 
 
-class Event(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
+class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
-        CheckConstraint("ticket_price >= 0", name="ticket_price_non_negative"),
-        CheckConstraint("total_tickets >= 0", name="total_tickets_non_negative"),
-        CheckConstraint("tickets_available >= 0", name="tickets_available_non_negative"),
+        PrimaryKeyConstraint(name="pk_events"),
+        CheckConstraint(
+            "ticket_price >= 0",
+            name="ck_events_ticket_price_non_negative",
+        ),
+        CheckConstraint(
+            "total_tickets >= 0",
+            name="ck_events_total_tickets_non_negative",
+        ),
+        CheckConstraint(
+            "tickets_available >= 0",
+            name="ck_events_tickets_available_non_negative",
+        ),
         CheckConstraint(
             "tickets_available <= total_tickets",
-            name="tickets_available_within_capacity",
+            name="ck_events_tickets_available_within_capacity",
         ),
     )
 
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
     organizer_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "users.id",
+            name="fk_events_organizer_id_users",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
     category_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("categories.id", ondelete="SET NULL"),
+        ForeignKey(
+            "categories.id",
+            name="fk_events_category_id_categories",
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -85,7 +130,7 @@ class Event(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     status: Mapped[EventStatus] = mapped_column(
         SqlEnum(
             EventStatus,
-            name="event_status",
+            name="ck_events_event_status",
             native_enum=False,
             create_constraint=True,
             validate_strings=True,
@@ -96,6 +141,21 @@ class Event(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         server_default=EventStatus.DRAFT.value,
     )
     reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -122,13 +182,22 @@ class Event(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
 
 class EventTag(Base):
     __tablename__ = "event_tags"
+    __table_args__ = (PrimaryKeyConstraint(name="pk_event_tags"),)
 
     event_id: Mapped[UUID] = mapped_column(
-        ForeignKey("events.id", ondelete="CASCADE"),
+        ForeignKey(
+            "events.id",
+            name="fk_event_tags_event_id_events",
+            ondelete="CASCADE",
+        ),
         primary_key=True,
     )
     tag_id: Mapped[UUID] = mapped_column(
-        ForeignKey("tags.id", ondelete="CASCADE"),
+        ForeignKey(
+            "tags.id",
+            name="fk_event_tags_tag_id_tags",
+            ondelete="CASCADE",
+        ),
         primary_key=True,
     )
 

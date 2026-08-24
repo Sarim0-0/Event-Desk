@@ -1,21 +1,37 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import (
+    ForeignKey,
+    PrimaryKeyConstraint,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, UUIDPrimaryKeyMixin
+from app.database.base import Base
 
 if TYPE_CHECKING:
-    from app.modules.users.models import User
+    from app.models.user import User
 
 
-class Role(UUIDPrimaryKeyMixin, Base):
+class Role(Base):
     __tablename__ = "roles"
+    __table_args__ = (
+        PrimaryKeyConstraint(name="pk_roles"),
+        UniqueConstraint("name", name="uq_roles_name"),
+    )
 
-    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
 
     users: Mapped[list[User]] = relationship(back_populates="role")
     role_permissions: Mapped[list[RolePermission]] = relationship(
@@ -30,10 +46,19 @@ class Role(UUIDPrimaryKeyMixin, Base):
     )
 
 
-class Permission(UUIDPrimaryKeyMixin, Base):
+class Permission(Base):
     __tablename__ = "permissions"
+    __table_args__ = (
+        PrimaryKeyConstraint(name="pk_permissions"),
+        UniqueConstraint("key", name="uq_permissions_key"),
+    )
 
-    key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
     role_permissions: Mapped[list[RolePermission]] = relationship(
@@ -50,13 +75,22 @@ class Permission(UUIDPrimaryKeyMixin, Base):
 
 class RolePermission(Base):
     __tablename__ = "role_permissions"
+    __table_args__ = (PrimaryKeyConstraint(name="pk_role_permissions"),)
 
     role_id: Mapped[UUID] = mapped_column(
-        ForeignKey("roles.id", ondelete="CASCADE"),
+        ForeignKey(
+            "roles.id",
+            name="fk_role_permissions_role_id_roles",
+            ondelete="CASCADE",
+        ),
         primary_key=True,
     )
     permission_id: Mapped[UUID] = mapped_column(
-        ForeignKey("permissions.id", ondelete="CASCADE"),
+        ForeignKey(
+            "permissions.id",
+            name="fk_role_permissions_permission_id_permissions",
+            ondelete="CASCADE",
+        ),
         primary_key=True,
     )
 

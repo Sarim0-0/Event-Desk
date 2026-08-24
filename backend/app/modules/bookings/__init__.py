@@ -1,1 +1,0 @@
-"""Ticket-booking persistence models."""

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     CheckConstraint,
@@ -10,43 +10,62 @@ from sqlalchemy import (
     Enum as SqlEnum,
     ForeignKey,
     Integer,
+    PrimaryKeyConstraint,
+    Uuid,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
-from app.modules.bookings.enums import BookingStatus
+from app.database.base import Base
+from app.models.enums import BookingStatus
 
 if TYPE_CHECKING:
-    from app.modules.events.models import Event
-    from app.modules.notifications.models import Notification
-    from app.modules.users.models import User
+    from app.models.event import Event
+    from app.models.notification import Notification
+    from app.models.user import User
 
 
-class Booking(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
+class Booking(Base):
     __tablename__ = "bookings"
     __table_args__ = (
-        CheckConstraint("quantity > 0", name="quantity_positive"),
+        PrimaryKeyConstraint(name="pk_bookings"),
+        CheckConstraint(
+            "quantity > 0",
+            name="ck_bookings_quantity_positive",
+        ),
         CheckConstraint(
             "(status = 'confirmed' AND cancelled_at IS NULL) OR "
             "(status = 'cancelled' AND cancelled_at IS NOT NULL)",
-            name="status_matches_cancellation_time",
+            name="ck_bookings_status_matches_cancellation_time",
         ),
     )
 
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
     user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "users.id",
+            name="fk_bookings_user_id_users",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
     event_id: Mapped[UUID] = mapped_column(
-        ForeignKey("events.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "events.id",
+            name="fk_bookings_event_id_events",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[BookingStatus] = mapped_column(
         SqlEnum(
             BookingStatus,
-            name="booking_status",
+            name="ck_bookings_booking_status",
             native_enum=False,
             create_constraint=True,
             validate_strings=True,
@@ -62,6 +81,21 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         server_default=func.now(),
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

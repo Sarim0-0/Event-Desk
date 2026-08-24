@@ -1,1 +1,0 @@
-"""Persistent notification models."""
