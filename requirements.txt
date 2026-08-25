@@ -3,3 +3,4 @@ alembic
 sqlalchemy[asyncio]
 asyncpg
 pydantic-settings
+email-validator
