@@ -7,31 +7,37 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.core.config import get_settings
-from app.database.model_registry import Base
+from app.core.config import settings
+from app.database.base import Base
+
+# These imports are intentional.
+# Importing each model registers its table with Base.metadata.
+from app.models.booking import Booking
+from app.models.event import Category, Event, EventTag, Tag
+from app.models.log import Log
+from app.models.notification import Notification
+from app.models.rbac import Permission, Role, RolePermission
+from app.models.refresh_token import RefreshToken
+from app.models.review import Reply, Review
+from app.models.user import User
 
 
 config = context.config
-settings = get_settings()
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# ConfigParser treats percent signs as interpolation markers. Escaping them
-# keeps percent-encoded credentials valid without storing the URL in the INI.
 config.set_main_option(
     "sqlalchemy.url",
-    settings.sqlalchemy_database_url.replace("%", "%%"),
+    settings.database_url.replace("%", "%%"),
 )
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Configure an offline migration context without opening a connection."""
-
     context.configure(
-        url=settings.sqlalchemy_database_url,
+        url=settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -43,7 +49,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def configure_migration_context(connection: Connection) -> None:
+def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -56,9 +62,11 @@ def configure_migration_context(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """Run migrations with SQLAlchemy's async engine and asyncpg."""
+    configuration = config.get_section(
+        config.config_ini_section,
+        {},
+    )
 
-    configuration = config.get_section(config.config_ini_section, {})
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
@@ -67,7 +75,7 @@ async def run_async_migrations() -> None:
 
     try:
         async with connectable.connect() as connection:
-            await connection.run_sync(configure_migration_context)
+            await connection.run_sync(do_run_migrations)
     finally:
         await connectable.dispose()
 
