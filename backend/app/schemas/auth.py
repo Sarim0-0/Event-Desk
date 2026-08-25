@@ -1,7 +1,14 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    SecretStr,
+    field_validator,
+)
 
 
 class RegistrationRole(str, Enum):
@@ -18,7 +25,7 @@ class SignUpRequest(BaseModel):
 
     name: str = Field(min_length=2, max_length=120)
     email: EmailStr = Field(max_length=320)
-    password: str = Field(min_length=8, max_length=128)
+    password: SecretStr = Field(min_length=8, max_length=128)
     role: RegistrationRole
 
     @field_validator("name", mode="before")
@@ -37,18 +44,19 @@ class SignUpRequest(BaseModel):
 
     @field_validator("password")
     @classmethod
-    def validate_password_strength(cls, password: str) -> str:
+    def validate_password_strength(cls, password: SecretStr) -> SecretStr:
+        raw_password = password.get_secret_value()
         missing_requirements: list[str] = []
 
-        if not any(character.islower() for character in password):
+        if not any(character.islower() for character in raw_password):
             missing_requirements.append("lowercase letter")
-        if not any(character.isupper() for character in password):
+        if not any(character.isupper() for character in raw_password):
             missing_requirements.append("uppercase letter")
-        if not any(character.isdigit() for character in password):
+        if not any(character.isdigit() for character in raw_password):
             missing_requirements.append("number")
         if not any(
             not character.isalnum() and not character.isspace()
-            for character in password
+            for character in raw_password
         ):
             missing_requirements.append("special character")
 
@@ -67,7 +75,7 @@ class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr = Field(max_length=320)
-    password: str = Field(min_length=1, max_length=128)
+    password: SecretStr = Field(min_length=1, max_length=128)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -83,6 +91,13 @@ class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     refresh_token: str = Field(min_length=1, max_length=4096)
+
+
+class AccessTokenResponse(BaseModel):
+    """A new access token returned after refreshing authentication."""
+
+    access_token: str = Field(min_length=1)
+    token_type: Literal["bearer"] = "bearer"
 
 
 class TokenResponse(BaseModel):

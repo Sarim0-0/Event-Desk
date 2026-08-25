@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     database_echo: bool = False
     database_pool_size: int = 5
     database_max_overflow: int = 10
+    jwt_secret_key: str
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
 
 
 settings = Settings()
