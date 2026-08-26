@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -42,9 +42,11 @@ class EventCreateRequest(BaseModel):
 
     @field_validator("event_datetime")
     @classmethod
-    def require_timezone(cls, value: datetime) -> datetime:
+    def validate_event_datetime(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("event_datetime must include a timezone offset.")
+        if value <= datetime.now(timezone.utc):
+            raise ValueError("event_datetime must be in the future.")
         return value
 
     @field_validator("tag_ids")
