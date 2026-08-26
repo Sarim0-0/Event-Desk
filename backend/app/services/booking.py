@@ -39,6 +39,47 @@ class InsufficientTicketsError(Exception):
         super().__init__("The event does not have enough available tickets.")
 
 
+class BookingNotFoundError(Exception):
+    def __init__(self, booking_id: UUID) -> None:
+        self.booking_id = booking_id
+        super().__init__("The selected booking does not exist.")
+
+
+class BookingAlreadyCancelledError(Exception):
+    def __init__(self, booking_id: UUID) -> None:
+        self.booking_id = booking_id
+        super().__init__("The booking has already been cancelled.")
+
+
+class BookingNotConfirmedError(Exception):
+    def __init__(self, booking_id: UUID) -> None:
+        self.booking_id = booking_id
+        super().__init__("Only a confirmed booking can be cancelled.")
+
+
+class BookingCancellationForbiddenError(Exception):
+    def __init__(self) -> None:
+        super().__init__("You do not have permission to cancel this booking.")
+
+
+class BookingCancellationEventNotFoundError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("The event for this booking does not exist.")
+
+
+class BookingInventoryConflictError(Exception):
+    def __init__(self, *, available_after_restoration: int, total: int) -> None:
+        self.available_after_restoration = available_after_restoration
+        self.total = total
+        super().__init__("Cancelling this booking would make ticket inventory invalid.")
+
+
+class BookingCancellationTransactionError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The booking cancellation could not be completed.")
+
+
 async def create_booking(
     session: AsyncSession,
     current_user: User,

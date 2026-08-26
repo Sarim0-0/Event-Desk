@@ -26,5 +26,6 @@ class BookingResponse(BaseModel):
     quantity: int
     status: BookingStatus
     booked_at: datetime
+    cancelled_at: datetime | None
     created_at: datetime
     updated_at: datetime
