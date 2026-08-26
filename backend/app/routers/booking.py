@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,11 +9,19 @@ from app.dependencies.auth import CurrentUser
 from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.auth import AccountUnavailableError
 from app.services.booking import (
+    BookingAlreadyCancelledError,
+    BookingCancellationEventNotFoundError,
+    BookingCancellationForbiddenError,
+    BookingCancellationTransactionError,
     BookingCreationForbiddenError,
     BookingEventNotFoundError,
+    BookingInventoryConflictError,
+    BookingNotConfirmedError,
+    BookingNotFoundError,
     EventNotBookableError,
     InsufficientTicketsError,
     InvalidBookingQuantityError,
+    cancel_booking,
     create_booking,
 )
 
@@ -64,4 +73,54 @@ async def create_booking_endpoint(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
+        ) from error
+
+
+@router.post(
+    "/{booking_id}/cancel",
+    response_model=BookingResponse,
+    status_code=status.HTTP_200_OK,
+    name="cancel_booking",
+)
+async def cancel_booking_endpoint(
+    booking_id: UUID,
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> BookingResponse:
+    try:
+        return await cancel_booking(session, current_user, booking_id)
+    except AccountUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is inactive.",
+        ) from error
+    except BookingCancellationForbiddenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+    except BookingNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BookingCancellationEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except (BookingAlreadyCancelledError, BookingNotConfirmedError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except BookingInventoryConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except BookingCancellationTransactionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The booking cancellation could not be completed.",
         ) from error
