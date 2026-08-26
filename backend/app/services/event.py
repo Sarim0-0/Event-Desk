@@ -2,16 +2,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import CREATE_EVENTS
 from app.models.user import User
 from app.repositories import event as event_repository
-from app.repositories import rbac as rbac_repository
 from app.schemas.event import EventCreateRequest, EventResponse
 from app.services.auth import AccountUnavailableError
-
-
-class EventCreationForbiddenError(Exception):
-    pass
 
 
 class CategoryNotFoundError(Exception):
@@ -33,14 +27,6 @@ async def create_event(
 ) -> EventResponse:
     try:
         _ensure_account_is_available(current_user)
-
-        can_create_events = await rbac_repository.role_has_permission(
-            session,
-            current_user.role_id,
-            CREATE_EVENTS,
-        )
-        if not can_create_events:
-            raise EventCreationForbiddenError
 
         if request.category_id is not None:
             category = await event_repository.get_category_by_id(

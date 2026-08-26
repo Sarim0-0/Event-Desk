@@ -3,13 +3,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import CREATE_EVENTS
 from app.database.dependencies import get_db_session
-from app.dependencies.auth import CurrentUser
+from app.dependencies.auth import require_permission
+from app.models.user import User
 from app.schemas.event import EventCreateRequest, EventResponse
 from app.services.auth import AccountUnavailableError
 from app.services.event import (
     CategoryNotFoundError,
-    EventCreationForbiddenError,
     TagsNotFoundError,
     create_event,
 )
@@ -27,16 +28,14 @@ DatabaseSession = Annotated[AsyncSession, Depends(get_db_session)]
 )
 async def create_event_endpoint(
     request: EventCreateRequest,
-    current_user: CurrentUser,
+    current_user: Annotated[
+        User,
+        Depends(require_permission(CREATE_EVENTS)),
+    ],
     session: DatabaseSession,
 ) -> EventResponse:
     try:
         return await create_event(session, current_user, request)
-    except EventCreationForbiddenError as error:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to create events.",
-        ) from error
     except AccountUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
