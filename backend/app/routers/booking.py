@@ -4,8 +4,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import CREATE_BOOKINGS
 from app.database.dependencies import get_db_session
-from app.dependencies.auth import CurrentUser
+from app.dependencies.auth import CurrentUser, require_permission
+from app.models.user import User
 from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.auth import AccountUnavailableError
 from app.services.booking import (
@@ -13,7 +15,6 @@ from app.services.booking import (
     BookingCancellationEventNotFoundError,
     BookingCancellationForbiddenError,
     BookingCancellationTransactionError,
-    BookingCreationForbiddenError,
     BookingEventNotFoundError,
     BookingInventoryConflictError,
     BookingNotConfirmedError,
@@ -39,16 +40,14 @@ DatabaseSession = Annotated[AsyncSession, Depends(get_db_session)]
 )
 async def create_booking_endpoint(
     request: BookingCreate,
-    current_user: CurrentUser,
+    current_user: Annotated[
+        User,
+        Depends(require_permission(CREATE_BOOKINGS)),
+    ],
     session: DatabaseSession,
 ) -> BookingResponse:
     try:
         return await create_booking(session, current_user, request)
-    except BookingCreationForbiddenError as error:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to book tickets.",
-        ) from error
     except AccountUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

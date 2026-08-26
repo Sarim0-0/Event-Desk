@@ -4,21 +4,13 @@ from uuid import UUID
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import (
-    CANCEL_ANY_BOOKING,
-    CANCEL_OWN_BOOKING,
-    CREATE_BOOKINGS,
-)
+from app.core.permissions import CANCEL_ANY_BOOKING, CANCEL_OWN_BOOKING
 from app.models.enums import BookingStatus, EventStatus
 from app.models.user import User
 from app.repositories import booking as booking_repository
 from app.repositories import rbac as rbac_repository
 from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.auth import AccountUnavailableError
-
-
-class BookingCreationForbiddenError(Exception):
-    pass
 
 
 class BookingEventNotFoundError(Exception):
@@ -30,7 +22,7 @@ class BookingEventNotFoundError(Exception):
 class EventNotBookableError(Exception):
     def __init__(self, event_id: UUID) -> None:
         self.event_id = event_id
-        super().__init__("Only published events can be booked.")
+        super().__init__("Only upcoming published events can be booked.")
 
 
 class InvalidBookingQuantityError(Exception):
@@ -93,14 +85,6 @@ async def create_booking(
     try:
         _ensure_account_is_available(current_user)
 
-        can_create_bookings = await rbac_repository.role_has_permission(
-            session,
-            current_user.role_id,
-            CREATE_BOOKINGS,
-        )
-        if not can_create_bookings:
-            raise BookingCreationForbiddenError
-
         if request.quantity < 1:
             raise InvalidBookingQuantityError
 
@@ -111,7 +95,10 @@ async def create_booking(
         if event is None:
             raise BookingEventNotFoundError(request.event_id)
 
-        if event.status is not EventStatus.PUBLISHED:
+        if (
+            event.status is not EventStatus.PUBLISHED
+            or event.event_datetime <= datetime.now(timezone.utc)
+        ):
             raise EventNotBookableError(event.id)
 
         if event.tickets_available < request.quantity:
