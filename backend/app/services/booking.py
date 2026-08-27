@@ -4,11 +4,9 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import CANCEL_ANY_BOOKING, CANCEL_OWN_BOOKING
 from app.models.enums import BookingStatus, EventStatus
 from app.models.user import User
 from app.repositories import booking as booking_repository
-from app.repositories import rbac as rbac_repository
 from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.auth import AccountUnavailableError
 
@@ -152,6 +150,9 @@ async def cancel_booking(
     session: AsyncSession,
     current_user: User,
     booking_id: UUID,
+    *,
+    can_cancel_own: bool,
+    can_cancel_any: bool,
 ) -> BookingResponse:
     try:
         _ensure_account_is_available(current_user)
@@ -185,22 +186,11 @@ async def cancel_booking(
         if booking.status is not BookingStatus.CONFIRMED:
             raise BookingNotConfirmedError(booking.id)
 
-        can_cancel_any_booking = await rbac_repository.role_has_permission(
-            session,
-            current_user.role_id,
-            CANCEL_ANY_BOOKING,
-        )
-        if not can_cancel_any_booking:
-            can_cancel_own_booking = await rbac_repository.role_has_permission(
-                session,
-                current_user.role_id,
-                CANCEL_OWN_BOOKING,
-            )
-            if (
-                not can_cancel_own_booking
-                or booking.user_id != current_user.id
-            ):
-                raise BookingCancellationForbiddenError()
+        if not can_cancel_any and (
+            not can_cancel_own
+            or booking.user_id != current_user.id
+        ):
+            raise BookingCancellationForbiddenError()
 
         available_after_restoration = (
             event.tickets_available + booking.quantity

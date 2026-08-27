@@ -4,9 +4,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import CREATE_BOOKINGS
+from app.core.permissions import (
+    CANCEL_ANY_BOOKING,
+    CANCEL_OWN_BOOKING,
+    CREATE_BOOKINGS,
+)
 from app.database.dependencies import get_db_session
-from app.dependencies.auth import CurrentUser, require_permission
+from app.dependencies.auth import (
+    PermissionGrant,
+    require_any_permission,
+    require_permission,
+)
 from app.models.user import User
 from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.auth import AccountUnavailableError
@@ -89,11 +97,25 @@ async def create_booking_endpoint(
 )
 async def cancel_booking_endpoint(
     booking_id: UUID,
-    current_user: CurrentUser,
+    permission_grant: Annotated[
+        PermissionGrant,
+        Depends(
+            require_any_permission(
+                CANCEL_OWN_BOOKING,
+                CANCEL_ANY_BOOKING,
+            )
+        ),
+    ],
     session: DatabaseSession,
 ) -> BookingResponse:
     try:
-        return await cancel_booking(session, current_user, booking_id)
+        return await cancel_booking(
+            session,
+            permission_grant.user,
+            booking_id,
+            can_cancel_own=permission_grant.allows(CANCEL_OWN_BOOKING),
+            can_cancel_any=permission_grant.allows(CANCEL_ANY_BOOKING),
+        )
     except AccountUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
