@@ -18,6 +18,7 @@ import app.models.user
 from app.routers.auth import router as auth_router
 from app.routers.booking import router as booking_router
 from app.routers.event import router as event_router
+from app.routers.reply import router as reply_router
 from app.routers.review import router as review_router
 
 
@@ -32,3 +33,4 @@ app.include_router(auth_router)
 app.include_router(booking_router)
 app.include_router(event_router)
 app.include_router(review_router)
+app.include_router(reply_router)
