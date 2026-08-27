@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
 
@@ -240,6 +241,73 @@ async def update_event(
     except SQLAlchemyError as error:
         await session.rollback()
         raise EventUpdateTransactionError from error
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def cancel_event(
+    session: AsyncSession,
+    current_user: User,
+    event_id: UUID,
+    *,
+    can_cancel_own: bool,
+    can_cancel_any: bool,
+) -> EventResponse:
+    try:
+        _ensure_account_is_available(current_user)
+
+        event = await event_repository.get_event_for_cancellation_for_update(
+            session,
+            event_id,
+        )
+        if event is None:
+            raise EventNotFoundError(event_id)
+
+        if (
+            event.status is EventStatus.CANCELLED
+            or event.deleted_at is not None
+        ):
+            raise EventAlreadyCancelledError(event_id)
+
+        if event.status is EventStatus.COMPLETED:
+            raise EventNotCancellableError(event_id)
+
+        if not can_cancel_any and (
+            not can_cancel_own
+            or event.organizer_id != current_user.id
+        ):
+            raise EventCancellationForbiddenError(event_id)
+
+        event_repository.cancel_event(
+            event,
+            cancelled_at=datetime.now(timezone.utc),
+        )
+        await event_repository.flush_event(session)
+        await event_repository.refresh_event(session, event)
+
+        response = EventResponse(
+            id=event.id,
+            organizer_id=event.organizer_id,
+            title=event.title,
+            description=event.description,
+            venue=event.venue,
+            event_datetime=event.event_datetime,
+            ticket_price=event.ticket_price,
+            total_tickets=event.total_tickets,
+            tickets_available=event.tickets_available,
+            category_id=event.category_id,
+            tag_ids=[tag.id for tag in event.tags],
+            status=event.status,
+            created_at=event.created_at,
+            updated_at=event.updated_at,
+        )
+
+        await session.commit()
+        return response
+    except SQLAlchemyError as error:
+        await session.rollback()
+        raise EventCancellationTransactionError from error
     except Exception:
         await session.rollback()
         raise
