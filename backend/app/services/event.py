@@ -20,6 +20,47 @@ class TagsNotFoundError(Exception):
         super().__init__("One or more selected tags do not exist.")
 
 
+class EventNotFoundError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("The selected Event does not exist.")
+
+
+class EventUpdateForbiddenError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("You do not have permission to edit this Event.")
+
+
+class EventNotEditableError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("This Event can no longer be edited.")
+
+
+class EmptyEventUpdateError(Exception):
+    def __init__(self) -> None:
+        super().__init__("At least one Event field must be supplied.")
+
+
+class InvalidEventUpdateError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The Event update information is invalid.")
+
+
+class EventCapacityBelowSoldTicketsError(Exception):
+    def __init__(self) -> None:
+        super().__init__(
+            "The total ticket capacity cannot be lower than the number "
+            "of tickets already sold."
+        )
+
+
+class EventUpdateTransactionError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The Event could not be updated.")
+
+
 async def create_event(
     session: AsyncSession,
     current_user: User,
