@@ -12,6 +12,7 @@ from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.auth import AccountUnavailableError
 from app.services.booking import (
     BookingAlreadyCancelledError,
+    BookingAlreadyExistsError,
     BookingCancellationEventNotFoundError,
     BookingCancellationForbiddenError,
     BookingCancellationTransactionError,
@@ -69,6 +70,11 @@ async def create_booking_endpoint(
             detail="Quantity must be at least 1.",
         ) from error
     except InsufficientTicketsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except BookingAlreadyExistsError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),

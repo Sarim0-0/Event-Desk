@@ -30,7 +30,19 @@ async def get_booking_event_id(
 ) -> UUID | None:
     statement = select(Booking.event_id).where(
         Booking.id == booking_id,
-        Booking.deleted_at.is_(None),
+    )
+    return await session.scalar(statement)
+
+
+async def get_booking_by_user_and_event(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    event_id: UUID,
+) -> Booking | None:
+    statement = select(Booking).where(
+        Booking.user_id == user_id,
+        Booking.event_id == event_id,
     )
     return await session.scalar(statement)
 
@@ -53,10 +65,7 @@ async def get_booking_for_update(
 ) -> Booking | None:
     statement = (
         select(Booking)
-        .where(
-            Booking.id == booking_id,
-            Booking.deleted_at.is_(None),
-        )
+        .where(Booking.id == booking_id)
         .with_for_update()
     )
     return await session.scalar(statement)
