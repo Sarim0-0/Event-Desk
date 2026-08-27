@@ -3,18 +3,11 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import CREATE_REVIEWS
 from app.models.enums import BookingStatus
 from app.models.user import User
-from app.repositories import rbac as rbac_repository
 from app.repositories import review as review_repository
 from app.schemas.review import ReviewCreate, ReviewResponse
 from app.services.auth import AccountUnavailableError
-
-
-class ReviewCreationForbiddenError(Exception):
-    def __init__(self) -> None:
-        super().__init__("You do not have permission to leave a review.")
 
 
 class ReviewBookingNotFoundError(Exception):
@@ -65,14 +58,6 @@ async def create_review(
     try:
         _ensure_account_is_available(current_user)
         _ensure_review_input_is_valid(request)
-
-        can_create_review = await rbac_repository.role_has_permission(
-            session,
-            current_user.role_id,
-            CREATE_REVIEWS,
-        )
-        if not can_create_review:
-            raise ReviewCreationForbiddenError()
 
         booking = await review_repository.get_booking_for_review(
             session,
