@@ -1,23 +1,38 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import CREATE_REVIEWS
+from app.core.permissions import (
+    CREATE_REVIEWS,
+    EDIT_ANY_REVIEW,
+    EDIT_OWN_REVIEW,
+)
 from app.database.dependencies import get_db_session
-from app.dependencies.auth import require_permission
+from app.dependencies.auth import (
+    PermissionGrant,
+    require_any_permission,
+    require_permission,
+)
 from app.models.user import User
-from app.schemas.review import ReviewCreate, ReviewResponse
+from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
 from app.services.auth import AccountUnavailableError
 from app.services.review import (
+    EmptyReviewUpdateError,
+    InvalidReviewUpdateError,
     InvalidReviewInputError,
     ReviewAlreadyExistsError,
     ReviewBookingNotEligibleError,
     ReviewBookingNotFoundError,
     ReviewBookingOwnershipError,
     ReviewEventNotFoundError,
+    ReviewNotFoundError,
     ReviewTransactionError,
+    ReviewUpdateForbiddenError,
+    ReviewUpdateTransactionError,
     create_review,
+    update_review,
 )
 
 
@@ -81,4 +96,60 @@ async def create_review_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The review could not be saved.",
+        ) from error
+
+
+@router.patch(
+    "/{review_id}",
+    response_model=ReviewResponse,
+    status_code=status.HTTP_200_OK,
+    name="update_review",
+)
+async def update_review_endpoint(
+    review_id: UUID,
+    request: ReviewUpdate,
+    permission_grant: Annotated[
+        PermissionGrant,
+        Depends(
+            require_any_permission(
+                EDIT_OWN_REVIEW,
+                EDIT_ANY_REVIEW,
+            )
+        ),
+    ],
+    session: DatabaseSession,
+) -> ReviewResponse:
+    try:
+        return await update_review(
+            session,
+            permission_grant.user,
+            review_id,
+            request,
+            can_update_own=permission_grant.allows(EDIT_OWN_REVIEW),
+            can_update_any=permission_grant.allows(EDIT_ANY_REVIEW),
+        )
+    except AccountUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is inactive.",
+        ) from error
+    except ReviewUpdateForbiddenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+    except ReviewNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except (EmptyReviewUpdateError, InvalidReviewUpdateError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+    except ReviewUpdateTransactionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The review could not be updated.",
         ) from error

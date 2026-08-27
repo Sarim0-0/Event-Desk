@@ -74,3 +74,14 @@ async def flush_review(
     review: Review,
 ) -> None:
     await session.flush([review])
+
+
+async def refresh_review(
+    session: AsyncSession,
+    review: Review,
+) -> Review:
+    await session.refresh(
+        review,
+        attribute_names=["id", "created_at", "updated_at"],
+    )
+    return review

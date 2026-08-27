@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from uuid import UUID
 
 from sqlalchemy import exists, select
@@ -22,3 +23,26 @@ async def role_has_permission(
         )
     )
     return bool(await session.scalar(statement))
+
+
+async def get_role_permission_keys(
+    session: AsyncSession,
+    role_id: UUID,
+    permission_keys: Collection[str],
+) -> frozenset[str]:
+    if not permission_keys:
+        return frozenset()
+
+    statement = (
+        select(Permission.key)
+        .join(
+            RolePermission,
+            RolePermission.permission_id == Permission.id,
+        )
+        .where(
+            RolePermission.role_id == role_id,
+            Permission.key.in_(permission_keys),
+        )
+    )
+    result = await session.scalars(statement)
+    return frozenset(result.all())

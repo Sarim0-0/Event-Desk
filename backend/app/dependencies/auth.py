@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.dependencies import get_db_session
 from app.models.user import User
-from app.repositories.rbac import role_has_permission
+from app.repositories.rbac import get_role_permission_keys, role_has_permission
 from app.services.auth import (
     AccountUnavailableError,
     InvalidCredentialsError,
@@ -44,6 +45,15 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+@dataclass(frozen=True)
+class PermissionGrant:
+    user: User
+    permission_keys: frozenset[str]
+
+    def allows(self, permission_key: str) -> bool:
+        return permission_key in self.permission_keys
+
+
 def require_permission(permission_key: str):
     """Build a dependency that allows users with one database permission."""
 
@@ -62,6 +72,36 @@ def require_permission(permission_key: str):
             )
 
         return current_user
+
+    return permission_dependency
+
+
+def require_any_permission(*permission_keys: str):
+    """Allow users whose role has at least one requested permission."""
+
+    requested_permissions = frozenset(permission_keys)
+    if not requested_permissions:
+        raise ValueError("At least one permission key is required.")
+
+    async def permission_dependency(
+        current_user: CurrentUser,
+        session: DatabaseSession,
+    ) -> PermissionGrant:
+        granted_permissions = await get_role_permission_keys(
+            session,
+            current_user.role_id,
+            requested_permissions,
+        )
+        if not granted_permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to perform this action.",
+            )
+
+        return PermissionGrant(
+            user=current_user,
+            permission_keys=granted_permissions,
+        )
 
     return permission_dependency
 
