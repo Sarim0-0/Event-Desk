@@ -77,6 +77,17 @@ class ReviewUpdateTransactionError(Exception):
         super().__init__("The review could not be updated.")
 
 
+class ReviewDeletionForbiddenError(Exception):
+    def __init__(self, review_id: UUID) -> None:
+        self.review_id = review_id
+        super().__init__("You do not have permission to delete this review.")
+
+
+class ReviewDeletionTransactionError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The review could not be deleted.")
+
+
 async def create_review(
     session: AsyncSession,
     current_user: User,
