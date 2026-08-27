@@ -28,6 +28,18 @@ async def get_review_by_booking_id(
     return await session.scalar(statement)
 
 
+async def get_review_by_id(
+    session: AsyncSession,
+    review_id: UUID,
+) -> Review | None:
+    statement = (
+        select(Review)
+        .options(joinedload(Review.booking))
+        .where(Review.id == review_id)
+    )
+    return await session.scalar(statement)
+
+
 def add_review(
     session: AsyncSession,
     *,
@@ -41,6 +53,19 @@ def add_review(
         comment=comment,
     )
     session.add(review)
+    return review
+
+
+def update_review(
+    review: Review,
+    *,
+    rating: int | None = None,
+    comment: str | None = None,
+) -> Review:
+    if rating is not None:
+        review.rating = rating
+    if comment is not None:
+        review.comment = comment
     return review
 
 
