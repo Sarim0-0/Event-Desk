@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import (
+    CANCEL_ANY_EVENT,
+    CANCEL_OWN_EVENT,
     CREATE_EVENTS,
     EDIT_ANY_EVENT,
     EDIT_OWN_EVENT,
@@ -21,13 +23,18 @@ from app.services.auth import AccountUnavailableError
 from app.services.event import (
     CategoryNotFoundError,
     EmptyEventUpdateError,
+    EventAlreadyCancelledError,
+    EventCancellationForbiddenError,
+    EventCancellationTransactionError,
     EventCapacityBelowSoldTicketsError,
+    EventNotCancellableError,
     EventNotEditableError,
     EventNotFoundError,
     EventUpdateForbiddenError,
     EventUpdateTransactionError,
     InvalidEventUpdateError,
     TagsNotFoundError,
+    cancel_event,
     create_event,
     update_event,
 )
@@ -138,4 +145,58 @@ async def update_event_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The Event could not be updated.",
+        ) from error
+
+
+@router.post(
+    "/{event_id}/cancel",
+    response_model=EventResponse,
+    status_code=status.HTTP_200_OK,
+    name="cancel_event",
+)
+async def cancel_event_endpoint(
+    event_id: UUID,
+    permission_grant: Annotated[
+        PermissionGrant,
+        Depends(
+            require_any_permission(
+                CANCEL_OWN_EVENT,
+                CANCEL_ANY_EVENT,
+            )
+        ),
+    ],
+    session: DatabaseSession,
+) -> EventResponse:
+    try:
+        return await cancel_event(
+            session,
+            permission_grant.user,
+            event_id,
+            can_cancel_own=permission_grant.allows(CANCEL_OWN_EVENT),
+            can_cancel_any=permission_grant.allows(CANCEL_ANY_EVENT),
+        )
+    except AccountUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is inactive.",
+        ) from error
+    except EventCancellationForbiddenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+    except EventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except (EventAlreadyCancelledError, EventNotCancellableError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except EventCancellationTransactionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The Event could not be cancelled.",
         ) from error
