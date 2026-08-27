@@ -1,8 +1,15 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.models.enums import EventStatus
 
@@ -62,6 +69,94 @@ class EventCreateRequest(BaseModel):
                 "A new event cannot start as cancelled or completed."
             )
         return value
+
+
+class EventUpdate(BaseModel):
+    """Client-provided Event fields that may be changed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, min_length=1)
+    venue: str | None = Field(default=None, min_length=1, max_length=255)
+    event_datetime: datetime | None = None
+    ticket_price: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=10,
+        decimal_places=2,
+    )
+    total_tickets: int | None = Field(default=None, gt=0)
+    category_id: UUID | None = None
+    tag_ids: list[UUID] | None = None
+    status: EventStatus | None = None
+
+    @field_validator("title", "venue", mode="before")
+    @classmethod
+    def normalize_update_short_text(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("This field cannot be null.")
+        if isinstance(value, str):
+            return " ".join(value.split())
+        return value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_update_description(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("description cannot be null.")
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("event_datetime")
+    @classmethod
+    def validate_update_event_datetime(
+        cls,
+        value: datetime | None,
+    ) -> datetime:
+        if value is None:
+            raise ValueError("event_datetime cannot be null.")
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("event_datetime must include a timezone offset.")
+        if value <= datetime.now(timezone.utc):
+            raise ValueError("event_datetime must be in the future.")
+        return value
+
+    @field_validator("ticket_price", "total_tickets")
+    @classmethod
+    def reject_null_number(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("This field cannot be null.")
+        return value
+
+    @field_validator("tag_ids")
+    @classmethod
+    def validate_update_tag_ids(
+        cls,
+        tag_ids: list[UUID] | None,
+    ) -> list[UUID]:
+        if tag_ids is None:
+            raise ValueError("tag_ids cannot be null.")
+        return list(dict.fromkeys(tag_ids))
+
+    @field_validator("status")
+    @classmethod
+    def validate_update_status(
+        cls,
+        value: EventStatus | None,
+    ) -> EventStatus:
+        if value is None:
+            raise ValueError("status cannot be null.")
+        if value not in {EventStatus.DRAFT, EventStatus.PUBLISHED}:
+            raise ValueError("An Event can only be edited as draft or published.")
+        return value
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("At least one Event field must be supplied.")
+        return self
 
 
 class EventResponse(BaseModel):

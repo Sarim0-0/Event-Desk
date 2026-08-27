@@ -1,13 +1,65 @@
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.enums import EventStatus
 from app.models.event import Category, Event, EventTag, Tag
+
+
+_EDITABLE_EVENT_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "venue",
+        "event_datetime",
+        "ticket_price",
+        "total_tickets",
+        "category_id",
+        "status",
+    }
+)
+
+
+async def get_event_for_update(
+    session: AsyncSession,
+    event_id: UUID,
+) -> Event | None:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.event_tags),
+            selectinload(Event.tags),
+        )
+        .where(
+            Event.id == event_id,
+            Event.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    return await session.scalar(statement)
+
+
+async def get_event_for_cancellation_for_update(
+    session: AsyncSession,
+    event_id: UUID,
+) -> Event | None:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.event_tags),
+            selectinload(Event.tags),
+        )
+        .where(Event.id == event_id)
+        .with_for_update()
+    )
+    return await session.scalar(statement)
 
 
 async def get_category_by_id(
@@ -27,6 +79,64 @@ async def get_tags_by_ids(
     statement = select(Tag).where(Tag.id.in_(tag_ids))
     result = await session.scalars(statement)
     return list(result.all())
+
+
+def update_event(
+    event: Event,
+    *,
+    changes: Mapping[str, object],
+    tags: Collection[Tag] | None = None,
+    tickets_available: int | None = None,
+) -> Event:
+    unsupported_fields = changes.keys() - _EDITABLE_EVENT_FIELDS
+    if unsupported_fields:
+        fields = ", ".join(sorted(unsupported_fields))
+        raise ValueError(f"Unsupported Event update fields: {fields}.")
+
+    for field, value in changes.items():
+        setattr(event, field, value)
+
+    if tickets_available is not None:
+        event.tickets_available = tickets_available
+
+    if tags is not None:
+        event.event_tags = [EventTag(tag=tag) for tag in tags]
+
+    return event
+
+
+def cancel_event(
+    event: Event,
+    *,
+    cancelled_at: datetime,
+) -> Event:
+    event.status = EventStatus.CANCELLED
+    event.deleted_at = cancelled_at
+    return event
+
+
+async def flush_event(
+    session: AsyncSession,
+) -> None:
+    await session.flush()
+
+
+async def refresh_event(
+    session: AsyncSession,
+    event: Event,
+) -> Event:
+    await session.refresh(
+        event,
+        attribute_names=[
+            "status",
+            "deleted_at",
+            "updated_at",
+            "category",
+            "event_tags",
+            "tags",
+        ],
+    )
+    return event
 
 
 async def create_event(
