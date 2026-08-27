@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import BookingStatus
 from app.models.user import User
 from app.repositories import review as review_repository
-from app.schemas.review import ReviewCreate, ReviewResponse
+from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
 from app.services.auth import AccountUnavailableError
 
 
@@ -135,6 +135,49 @@ async def create_review(
         raise
 
 
+async def update_review(
+    session: AsyncSession,
+    current_user: User,
+    review_id: UUID,
+    request: ReviewUpdate,
+    *,
+    can_update_own: bool,
+    can_update_any: bool,
+) -> ReviewResponse:
+    try:
+        _ensure_account_is_available(current_user)
+        changes = _get_review_update_changes(request)
+
+        review = await review_repository.get_review_by_id(session, review_id)
+        if review is None:
+            raise ReviewNotFoundError(review_id)
+
+        if not can_update_any and (
+            not can_update_own
+            or review.booking.user_id != current_user.id
+        ):
+            raise ReviewUpdateForbiddenError(review_id)
+
+        review_repository.update_review(
+            review,
+            rating=changes.get("rating"),
+            comment=changes.get("comment"),
+        )
+        await review_repository.flush_review(session, review)
+        await review_repository.refresh_review(session, review)
+
+        response = ReviewResponse.model_validate(review)
+
+        await session.commit()
+        return response
+    except SQLAlchemyError as error:
+        await session.rollback()
+        raise ReviewUpdateTransactionError() from error
+    except Exception:
+        await session.rollback()
+        raise
+
+
 def _ensure_account_is_available(user: User) -> None:
     if not user.is_active or user.deleted_at is not None:
         raise AccountUnavailableError
@@ -143,6 +186,26 @@ def _ensure_account_is_available(user: User) -> None:
 def _ensure_review_input_is_valid(request: ReviewCreate) -> None:
     if not 1 <= request.rating <= 5 or not request.comment.strip():
         raise InvalidReviewInputError()
+
+
+def _get_review_update_changes(request: ReviewUpdate) -> dict[str, object]:
+    changes = request.model_dump(exclude_unset=True)
+    if not changes:
+        raise EmptyReviewUpdateError()
+
+    rating = changes.get("rating")
+    comment = changes.get("comment")
+    if (
+        rating is not None
+        and (type(rating) is not int or not 1 <= rating <= 5)
+    ):
+        raise InvalidReviewUpdateError()
+    if comment is not None and (
+        not isinstance(comment, str) or not comment.strip()
+    ):
+        raise InvalidReviewUpdateError()
+
+    return changes
 
 
 def _get_constraint_name(error: IntegrityError) -> str | None:
