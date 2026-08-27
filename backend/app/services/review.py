@@ -50,6 +50,33 @@ class ReviewTransactionError(Exception):
         super().__init__("The review could not be saved.")
 
 
+class ReviewNotFoundError(Exception):
+    def __init__(self, review_id: UUID) -> None:
+        self.review_id = review_id
+        super().__init__("The selected review does not exist.")
+
+
+class ReviewUpdateForbiddenError(Exception):
+    def __init__(self, review_id: UUID) -> None:
+        self.review_id = review_id
+        super().__init__("You do not have permission to edit this review.")
+
+
+class EmptyReviewUpdateError(Exception):
+    def __init__(self) -> None:
+        super().__init__("At least one review field must be supplied.")
+
+
+class InvalidReviewUpdateError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The review update information is invalid.")
+
+
+class ReviewUpdateTransactionError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The review could not be updated.")
+
+
 async def create_review(
     session: AsyncSession,
     current_user: User,
