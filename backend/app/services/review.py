@@ -189,6 +189,39 @@ async def update_review(
         raise
 
 
+async def delete_review(
+    session: AsyncSession,
+    current_user: User,
+    review_id: UUID,
+    *,
+    can_delete_own: bool,
+    can_delete_any: bool,
+) -> None:
+    try:
+        _ensure_account_is_available(current_user)
+
+        review = await review_repository.get_review_by_id(session, review_id)
+        if review is None:
+            raise ReviewNotFoundError(review_id)
+
+        if not can_delete_any and (
+            not can_delete_own
+            or review.booking.user_id != current_user.id
+        ):
+            raise ReviewDeletionForbiddenError(review_id)
+
+        await review_repository.delete_review(session, review)
+        await review_repository.flush_review(session, review)
+
+        await session.commit()
+    except SQLAlchemyError as error:
+        await session.rollback()
+        raise ReviewDeletionTransactionError() from error
+    except Exception:
+        await session.rollback()
+        raise
+
+
 def _ensure_account_is_available(user: User) -> None:
     if not user.is_active or user.deleted_at is not None:
         raise AccountUnavailableError
