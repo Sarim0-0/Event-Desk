@@ -20,7 +20,6 @@ from app.database.base import Base
 
 if TYPE_CHECKING:
     from app.models.booking import Booking
-    from app.models.event import Event
     from app.models.review import Review
     from app.models.user import User
 
@@ -30,8 +29,7 @@ class Notification(Base):
     __table_args__ = (
         PrimaryKeyConstraint(name="pk_notifications"),
         CheckConstraint(
-            "(CASE WHEN related_event_id IS NULL THEN 0 ELSE 1 END + "
-            "CASE WHEN related_booking_id IS NULL THEN 0 ELSE 1 END + "
+            "(CASE WHEN related_booking_id IS NULL THEN 0 ELSE 1 END + "
             "CASE WHEN related_review_id IS NULL THEN 0 ELSE 1 END) <= 1",
             name="ck_notifications_at_most_one_related_entity",
         ),
@@ -52,14 +50,6 @@ class Notification(Base):
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    related_event_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(
-            "events.id",
-            name="fk_notifications_related_event_id_events",
-            ondelete="SET NULL",
-        ),
-        nullable=True,
-    )
     related_booking_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
             "bookings.id",
@@ -87,10 +77,6 @@ class Notification(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="notifications")
-    related_event: Mapped[Event | None] = relationship(
-        back_populates="notifications",
-        foreign_keys=[related_event_id],
-    )
     related_booking: Mapped[Booking | None] = relationship(
         back_populates="notifications",
         foreign_keys=[related_booking_id],

@@ -26,8 +26,6 @@ from app.models.enums import EventStatus
 
 if TYPE_CHECKING:
     from app.models.booking import Booking
-    from app.models.notification import Notification
-    from app.models.review import Review
     from app.models.user import User
 
 
@@ -124,7 +122,7 @@ class Event(Base):
         DateTime(timezone=True),
         nullable=False,
     )
-    ticket_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    ticket_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     total_tickets: Mapped[int] = mapped_column(Integer, nullable=False)
     tickets_available: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[EventStatus] = mapped_column(
@@ -173,11 +171,6 @@ class Event(Base):
         viewonly=True,
     )
     bookings: Mapped[list[Booking]] = relationship(back_populates="event")
-    reviews: Mapped[list[Review]] = relationship(back_populates="event")
-    notifications: Mapped[list[Notification]] = relationship(
-        back_populates="related_event",
-        foreign_keys="Notification.related_event_id",
-    )
 
 
 class EventTag(Base):

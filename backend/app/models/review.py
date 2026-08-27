@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Enum as SqlEnum,
     ForeignKey,
     Integer,
     PrimaryKeyConstraint,
@@ -18,9 +19,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
+from app.models.enums import ReplyRole
 
 if TYPE_CHECKING:
-    from app.models.event import Event
+    from app.models.booking import Booking
     from app.models.notification import Notification
     from app.models.user import User
 
@@ -34,9 +36,8 @@ class Review(Base):
             name="ck_reviews_rating_between_one_and_five",
         ),
         UniqueConstraint(
-            "user_id",
-            "event_id",
-            name="uq_reviews_user_id_event_id",
+            "booking_id",
+            name="uq_reviews_booking_id",
         ),
     )
 
@@ -45,18 +46,10 @@ class Review(Base):
         primary_key=True,
         default=uuid4,
     )
-    user_id: Mapped[UUID] = mapped_column(
+    booking_id: Mapped[UUID] = mapped_column(
         ForeignKey(
-            "users.id",
-            name="fk_reviews_user_id_users",
-            ondelete="RESTRICT",
-        ),
-        nullable=False,
-    )
-    event_id: Mapped[UUID] = mapped_column(
-        ForeignKey(
-            "events.id",
-            name="fk_reviews_event_id_events",
+            "bookings.id",
+            name="fk_reviews_booking_id_bookings",
             ondelete="RESTRICT",
         ),
         nullable=False,
@@ -75,8 +68,7 @@ class Review(Base):
         onupdate=func.now(),
     )
 
-    user: Mapped[User] = relationship(back_populates="reviews")
-    event: Mapped[Event] = relationship(back_populates="reviews")
+    booking: Mapped[Booking] = relationship(back_populates="review")
     replies: Mapped[list[Reply]] = relationship(
         back_populates="review",
         cascade="all, delete-orphan",
@@ -90,7 +82,19 @@ class Review(Base):
 
 class Reply(Base):
     __tablename__ = "replies"
-    __table_args__ = (PrimaryKeyConstraint(name="pk_replies"),)
+    __table_args__ = (
+        PrimaryKeyConstraint(name="pk_replies"),
+        UniqueConstraint(
+            "review_id",
+            "replier_role",
+            name="uq_replies_review_id_replier_role",
+        ),
+        UniqueConstraint(
+            "review_id",
+            "user_id",
+            name="uq_replies_review_id_user_id",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -110,6 +114,17 @@ class Reply(Base):
             "users.id",
             name="fk_replies_user_id_users",
             ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    replier_role: Mapped[ReplyRole] = mapped_column(
+        SqlEnum(
+            ReplyRole,
+            name="ck_replies_replier_role",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=lambda enum: [member.value for member in enum],
         ),
         nullable=False,
     )

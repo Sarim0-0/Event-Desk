@@ -12,6 +12,11 @@ class BookingStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ReplyRole(str, Enum):
+    ORGANIZER = "organizer"
+    ADMIN = "admin"
+
+
 class EventStatus(str, Enum):
     DRAFT = "draft"
     PUBLISHED = "published"
