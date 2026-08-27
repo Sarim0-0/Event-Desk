@@ -22,6 +22,19 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
+    cors_allowed_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Return normalized origins configured as a comma-separated list."""
+
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
 
 settings = Settings()
