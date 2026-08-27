@@ -17,11 +17,8 @@ import app.models.rbac
 import app.models.refresh_token
 import app.models.review
 import app.models.user
-from app.routers.auth import router as auth_router
-from app.routers.booking import router as booking_router
-from app.routers.event import router as event_router
-from app.routers.reply import router as reply_router
-from app.routers.review import router as review_router
+from app.api.exception_handlers import register_exception_handlers
+from app.api.router import api_router
 
 
 @asynccontextmanager
@@ -31,6 +28,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="EventDesk API", lifespan=lifespan)
+register_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -38,8 +36,4 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["Accept", "Authorization", "Content-Type"],
 )
-app.include_router(auth_router)
-app.include_router(booking_router)
-app.include_router(event_router)
-app.include_router(review_router)
-app.include_router(reply_router)
+app.include_router(api_router)

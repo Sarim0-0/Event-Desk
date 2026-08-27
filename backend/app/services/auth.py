@@ -5,6 +5,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    ForbiddenError,
+    ServiceUnavailableError,
+)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -25,26 +31,6 @@ from app.schemas.auth import (
 from app.schemas.user import UserResponse
 
 
-class EmailAlreadyRegisteredError(Exception):
-    pass
-
-
-class InvalidCredentialsError(Exception):
-    pass
-
-
-class AccountUnavailableError(Exception):
-    pass
-
-
-class RegistrationRoleUnavailableError(Exception):
-    pass
-
-
-class InvalidRefreshTokenError(Exception):
-    pass
-
-
 async def sign_up(
     session: AsyncSession,
     request: SignUpRequest,
@@ -56,14 +42,18 @@ async def sign_up(
         async with session.begin():
             email = str(request.email)
             if await auth_repository.get_user_by_email(session, email) is not None:
-                raise EmailAlreadyRegisteredError
+                raise ConflictError(
+                    "An account with this email already exists."
+                )
 
             role = await auth_repository.get_role_by_name(
                 session,
                 request.role.value,
             )
             if role is None:
-                raise RegistrationRoleUnavailableError
+                raise ServiceUnavailableError(
+                    "Registration is temporarily unavailable."
+                )
 
             user = auth_repository.add_user(
                 session,
@@ -84,7 +74,9 @@ async def sign_up(
                 created_at=user.created_at,
             )
     except IntegrityError as error:
-        raise EmailAlreadyRegisteredError from error
+        raise ConflictError(
+            "An account with this email already exists."
+        ) from error
 
     return response
 
@@ -99,7 +91,7 @@ async def log_in(
             str(request.email),
         )
         if user is None:
-            raise InvalidCredentialsError
+            raise AuthenticationError("Incorrect email or password.")
 
         password_is_valid = await run_in_threadpool(
             verify_password,
@@ -107,7 +99,7 @@ async def log_in(
             user.password_hash,
         )
         if not password_is_valid:
-            raise InvalidCredentialsError
+            raise AuthenticationError("Incorrect email or password.")
 
         _ensure_account_is_available(user)
         return await _issue_token_pair(session, user)
@@ -120,7 +112,9 @@ async def refresh_access_token(
     try:
         user_id = decode_token_subject(request.refresh_token, "refresh")
     except InvalidTokenError as error:
-        raise InvalidRefreshTokenError from error
+        raise AuthenticationError(
+            "Invalid or expired refresh token."
+        ) from error
 
     token_hash = hash_refresh_token(request.refresh_token)
     now = datetime.now(timezone.utc)
@@ -136,7 +130,7 @@ async def refresh_access_token(
             or stored_token.revoked_at is not None
             or stored_token.expires_at <= now
         ):
-            raise InvalidRefreshTokenError
+            raise AuthenticationError("Invalid or expired refresh token.")
 
         _ensure_account_is_available(stored_token.user)
         return AccessTokenResponse(
@@ -154,7 +148,7 @@ async def log_out(
     try:
         user_id = decode_token_subject(request.refresh_token, "refresh")
     except InvalidTokenError as error:
-        raise InvalidRefreshTokenError from error
+        raise AuthenticationError("Invalid refresh token.") from error
 
     token_hash = hash_refresh_token(request.refresh_token)
 
@@ -164,7 +158,7 @@ async def log_out(
             token_hash,
         )
         if stored_token is None or stored_token.user_id != user_id:
-            raise InvalidRefreshTokenError
+            raise AuthenticationError("Invalid refresh token.")
 
         if stored_token.revoked_at is None:
             auth_repository.revoke_refresh_token(
@@ -180,11 +174,13 @@ async def get_authenticated_user(
     try:
         user_id = decode_token_subject(access_token, "access")
     except InvalidTokenError as error:
-        raise InvalidCredentialsError from error
+        raise AuthenticationError(
+            "Could not validate credentials."
+        ) from error
 
     user = await auth_repository.get_user_by_id(session, user_id)
     if user is None:
-        raise InvalidCredentialsError
+        raise AuthenticationError("Could not validate credentials.")
 
     _ensure_account_is_available(user)
     return user
@@ -213,4 +209,4 @@ async def _issue_token_pair(
 
 def _ensure_account_is_available(user: User) -> None:
     if not user.is_active or user.deleted_at is not None:
-        raise AccountUnavailableError
+        raise ForbiddenError("Account is inactive.")
