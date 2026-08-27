@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     PrimaryKeyConstraint,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -22,6 +23,7 @@ from app.models.enums import BookingStatus
 if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.notification import Notification
+    from app.models.review import Review
     from app.models.user import User
 
 
@@ -37,6 +39,11 @@ class Booking(Base):
             "(status = 'confirmed' AND cancelled_at IS NULL) OR "
             "(status = 'cancelled' AND cancelled_at IS NOT NULL)",
             name="ck_bookings_status_matches_cancellation_time",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "event_id",
+            name="uq_bookings_user_id_event_id",
         ),
     )
 
@@ -95,13 +102,12 @@ class Booking(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
     user: Mapped[User] = relationship(back_populates="bookings")
     event: Mapped[Event] = relationship(back_populates="bookings")
+    review: Mapped[Review | None] = relationship(
+        back_populates="booking",
+        uselist=False,
+    )
     notifications: Mapped[list[Notification]] = relationship(
         back_populates="related_booking",
         foreign_keys="Notification.related_booking_id",

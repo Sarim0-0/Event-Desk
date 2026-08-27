@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from app.models.notification import Notification
     from app.models.rbac import Role
     from app.models.refresh_token import RefreshToken
-    from app.models.review import Reply, Review
+    from app.models.review import Reply
 
 
 class User(Base):
@@ -82,7 +82,6 @@ class User(Base):
     )
     organized_events: Mapped[list[Event]] = relationship(back_populates="organizer")
     bookings: Mapped[list[Booking]] = relationship(back_populates="user")
-    reviews: Mapped[list[Review]] = relationship(back_populates="user")
     replies: Mapped[list[Reply]] = relationship(back_populates="user")
     notifications: Mapped[list[Notification]] = relationship(
         back_populates="user",
