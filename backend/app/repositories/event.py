@@ -45,6 +45,23 @@ async def get_event_for_update(
     return await session.scalar(statement)
 
 
+async def get_event_for_cancellation_for_update(
+    session: AsyncSession,
+    event_id: UUID,
+) -> Event | None:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.event_tags),
+            selectinload(Event.tags),
+        )
+        .where(Event.id == event_id)
+        .with_for_update()
+    )
+    return await session.scalar(statement)
+
+
 async def get_category_by_id(
     session: AsyncSession,
     category_id: UUID,
@@ -88,6 +105,16 @@ def update_event(
     return event
 
 
+def cancel_event(
+    event: Event,
+    *,
+    cancelled_at: datetime,
+) -> Event:
+    event.status = EventStatus.CANCELLED
+    event.deleted_at = cancelled_at
+    return event
+
+
 async def flush_event(
     session: AsyncSession,
 ) -> None:
@@ -101,6 +128,8 @@ async def refresh_event(
     await session.refresh(
         event,
         attribute_names=[
+            "status",
+            "deleted_at",
             "updated_at",
             "category",
             "event_tags",

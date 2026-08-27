@@ -66,6 +66,29 @@ class EventUpdateTransactionError(Exception):
         super().__init__("The Event could not be updated.")
 
 
+class EventCancellationForbiddenError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("You do not have permission to cancel this Event.")
+
+
+class EventAlreadyCancelledError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("This Event has already been cancelled.")
+
+
+class EventNotCancellableError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("This Event can no longer be cancelled.")
+
+
+class EventCancellationTransactionError(Exception):
+    def __init__(self) -> None:
+        super().__init__("The Event could not be cancelled.")
+
+
 async def create_event(
     session: AsyncSession,
     current_user: User,
