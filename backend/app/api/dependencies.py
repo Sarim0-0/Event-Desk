@@ -1,11 +1,20 @@
 from dataclasses import dataclass
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import (
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketException,
+    status,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AuthenticationError, ForbiddenError
 from app.database.dependencies import get_db_session
+from app.database.session import async_session_factory
 from app.models.user import User
 from app.repositories.rbac import get_role_permission_keys, role_has_permission
 from app.services.auth import get_authenticated_user
@@ -31,6 +40,28 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_current_websocket_user_id(websocket: WebSocket) -> UUID:
+    """Authenticate a WebSocket without keeping a database session open."""
+
+    access_token = websocket.query_params.get("token")
+    if access_token is None:
+        raise _websocket_credentials_exception()
+
+    try:
+        async with async_session_factory() as session:
+            user = await get_authenticated_user(session, access_token)
+    except (AuthenticationError, ForbiddenError) as error:
+        raise _websocket_credentials_exception() from error
+
+    return user.id
+
+
+CurrentWebSocketUserId = Annotated[
+    UUID,
+    Depends(get_current_websocket_user_id),
+]
 
 
 @dataclass(frozen=True)
@@ -99,4 +130,11 @@ def _credentials_exception() -> HTTPException:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials.",
         headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _websocket_credentials_exception() -> WebSocketException:
+    return WebSocketException(
+        code=status.WS_1008_POLICY_VIOLATION,
+        reason="Could not validate credentials.",
     )
