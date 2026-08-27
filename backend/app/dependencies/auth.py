@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.dependencies import get_db_session
 from app.models.user import User
+from app.repositories.rbac import role_has_permission
 from app.services.auth import (
     AccountUnavailableError,
     InvalidCredentialsError,
@@ -41,6 +42,28 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_permission(permission_key: str):
+    """Build a dependency that allows users with one database permission."""
+
+    async def permission_dependency(
+        current_user: CurrentUser,
+        session: DatabaseSession,
+    ) -> User:
+        if not await role_has_permission(
+            session,
+            current_user.role_id,
+            permission_key,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to perform this action.",
+            )
+
+        return current_user
+
+    return permission_dependency
 
 
 def _credentials_exception() -> HTTPException:
