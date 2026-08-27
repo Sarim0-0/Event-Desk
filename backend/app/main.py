@@ -16,6 +16,7 @@ import app.models.refresh_token
 import app.models.review
 import app.models.user
 from app.routers.auth import router as auth_router
+from app.routers.booking import router as booking_router
 from app.routers.event import router as event_router
 
 
@@ -27,4 +28,5 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="EventDesk API", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(booking_router)
 app.include_router(event_router)
