@@ -18,7 +18,7 @@ class EventCreateRequest(BaseModel):
     event_datetime: datetime
     ticket_price: Decimal = Field(
         ge=0,
-        max_digits=12,
+        max_digits=10,
         decimal_places=2,
     )
     total_tickets: int = Field(gt=0)

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import CANCEL_ANY_BOOKING, CANCEL_OWN_BOOKING
@@ -34,6 +34,12 @@ class InsufficientTicketsError(Exception):
         self.requested = requested
         self.available = available
         super().__init__("The event does not have enough available tickets.")
+
+
+class BookingAlreadyExistsError(Exception):
+    def __init__(self, event_id: UUID) -> None:
+        self.event_id = event_id
+        super().__init__("You already have a booking for this event.")
 
 
 class BookingNotFoundError(Exception):
@@ -101,6 +107,14 @@ async def create_booking(
         ):
             raise EventNotBookableError(event.id)
 
+        existing_booking = await booking_repository.get_booking_by_user_and_event(
+            session,
+            user_id=current_user.id,
+            event_id=event.id,
+        )
+        if existing_booking is not None:
+            raise BookingAlreadyExistsError(event.id)
+
         if event.tickets_available < request.quantity:
             raise InsufficientTicketsError(
                 requested=request.quantity,
@@ -124,6 +138,11 @@ async def create_booking(
 
         await session.commit()
         return response
+    except IntegrityError as error:
+        await session.rollback()
+        if _get_constraint_name(error) == "uq_bookings_user_id_event_id":
+            raise BookingAlreadyExistsError(request.event_id) from error
+        raise
     except Exception:
         await session.rollback()
         raise
@@ -155,7 +174,7 @@ async def cancel_booking(
             session,
             booking_id,
         )
-        if booking is None or booking.deleted_at is not None:
+        if booking is None:
             raise BookingNotFoundError(booking_id)
 
         if booking.event_id != event_id:
@@ -214,3 +233,15 @@ async def cancel_booking(
 def _ensure_account_is_available(user: User) -> None:
     if not user.is_active or user.deleted_at is not None:
         raise AccountUnavailableError
+
+
+def _get_constraint_name(error: IntegrityError) -> str | None:
+    original_error = error.orig
+    cause = getattr(original_error, "__cause__", None)
+    diagnostics = getattr(original_error, "diag", None)
+
+    return (
+        getattr(original_error, "constraint_name", None)
+        or getattr(cause, "constraint_name", None)
+        or getattr(diagnostics, "constraint_name", None)
+    )
