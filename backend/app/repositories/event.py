@@ -35,6 +35,7 @@ def _visible_event_conditions(
     conditions: list[ColumnElement[bool]] = [
         Event.status == EventStatus.PUBLISHED,
         Event.deleted_at.is_(None),
+        Event.event_datetime > func.now(),
     ]
 
     if category_id is not None:
