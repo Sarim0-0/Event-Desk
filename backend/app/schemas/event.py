@@ -207,3 +207,11 @@ class PaginatedEventsResponse(BaseModel):
     page_size: Literal[6] = EVENTS_PER_PAGE
     total_items: int = Field(ge=0)
     total_pages: int = Field(ge=0)
+
+
+class EventAvailabilityResponse(BaseModel):
+    """Current ticket inventory for a visible Event."""
+
+    event_id: UUID
+    total_tickets: int
+    tickets_available: int
