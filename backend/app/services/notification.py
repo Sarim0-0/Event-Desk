@@ -58,6 +58,24 @@ async def list_notifications(
     ]
 
 
+async def list_unread_notifications(
+    session: AsyncSession,
+    user_id: UUID,
+) -> list[NotificationResponse]:
+    """Return unread Notifications for a trusted authenticated User ID."""
+
+    notifications = (
+        await notification_repository.list_unread_user_notifications(
+            session,
+            user_id=user_id,
+        )
+    )
+    return [
+        NotificationResponse.model_validate(notification)
+        for notification in notifications
+    ]
+
+
 async def mark_notification_read(
     session: AsyncSession,
     current_user: User,

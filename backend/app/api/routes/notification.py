@@ -15,6 +15,7 @@ from app.api.dependencies import (
     require_permission,
 )
 from app.core.permissions import VIEW_OWN_NOTIFICATIONS
+from app.database.session import async_session_factory
 from app.models.enums import NotificationContextFilter
 from app.models.user import User
 from app.realtime.manager import notification_connection_manager
@@ -24,6 +25,7 @@ from app.schemas.notification import (
 )
 from app.services.notification import (
     list_notifications,
+    list_unread_notifications,
     mark_all_notifications_read,
     mark_notification_read,
 )
@@ -95,9 +97,28 @@ async def notification_websocket_endpoint(
     websocket: WebSocket,
     user_id: CurrentWebSocketUserId,
 ) -> None:
+    """Connect and replay unread Notifications to this socket only.
+
+    Live delivery can overlap replay. Clients should deduplicate payloads using
+    the stable Notification ID included in every response.
+    """
+
     await notification_connection_manager.connect(user_id, websocket)
 
     try:
+        async with async_session_factory() as session:
+            unread_notifications = await list_unread_notifications(
+                session,
+                user_id,
+            )
+
+        for notification in unread_notifications:
+            await notification_connection_manager.send_notification_to_connection(
+                user_id,
+                websocket,
+                notification,
+            )
+
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
