@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 
 from app.api.dependencies import (
     DatabaseSession,
@@ -19,6 +19,9 @@ from app.core.permissions import (
 from app.models.user import User
 from app.schemas.event import EventCreateRequest, EventResponse, EventUpdate
 from app.services.event import cancel_event, create_event, update_event
+from app.tasks.notification import (
+    create_event_cancellation_notifications_in_background,
+)
 
 
 router = APIRouter(prefix="/events", tags=["Events"])
@@ -78,6 +81,7 @@ async def update_event_endpoint(
 )
 async def cancel_event_endpoint(
     event_id: UUID,
+    background_tasks: BackgroundTasks,
     permission_grant: Annotated[
         PermissionGrant,
         Depends(
@@ -89,10 +93,15 @@ async def cancel_event_endpoint(
     ],
     session: DatabaseSession,
 ) -> EventResponse:
-    return await cancel_event(
+    event = await cancel_event(
         session,
         permission_grant.user,
         event_id,
         can_cancel_own=permission_grant.allows(CANCEL_OWN_EVENT),
         can_cancel_any=permission_grant.allows(CANCEL_ANY_EVENT),
     )
+    background_tasks.add_task(
+        create_event_cancellation_notifications_in_background,
+        event_id=event.id,
+    )
+    return event
