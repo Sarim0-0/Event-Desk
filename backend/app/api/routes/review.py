@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 
 from app.api.dependencies import (
     DatabaseSession,
@@ -16,9 +16,11 @@ from app.core.permissions import (
     EDIT_ANY_REVIEW,
     EDIT_OWN_REVIEW,
 )
+from app.models.enums import NotificationType
 from app.models.user import User
 from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
 from app.services.review import create_review, delete_review, update_review
+from app.tasks.notification import create_notification_in_background
 
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
@@ -32,13 +34,20 @@ router = APIRouter(prefix="/reviews", tags=["Reviews"])
 )
 async def create_review_endpoint(
     request: ReviewCreate,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[
         User,
         Depends(require_permission(CREATE_REVIEWS)),
     ],
     session: DatabaseSession,
 ) -> ReviewResponse:
-    return await create_review(session, current_user, request)
+    review = await create_review(session, current_user, request)
+    background_tasks.add_task(
+        create_notification_in_background,
+        notification_type=NotificationType.EVENT_REVIEWED,
+        related_review_id=review.id,
+    )
+    return review
 
 
 @router.patch(
