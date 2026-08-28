@@ -41,19 +41,37 @@ class NotificationConnectionManager:
         if not connections:
             return
 
+        for websocket in connections:
+            await self.send_notification_to_connection(
+                user_id,
+                websocket,
+                notification,
+            )
+
+    async def send_notification_to_connection(
+        self,
+        user_id: UUID,
+        websocket: WebSocket,
+        notification: NotificationResponse,
+    ) -> None:
+        """Send a Notification to one registered connection only."""
+
+        user_connections = self._connections.get(user_id)
+        if user_connections is None or websocket not in user_connections:
+            return
+
         payload = {
             "type": "notification",
             "data": notification.model_dump(mode="json"),
         }
 
-        for websocket in connections:
-            try:
-                await websocket.send_json(payload)
-            except Exception:
-                self.disconnect(user_id, websocket)
-                logger.exception(
-                    "Removed a failed Notification WebSocket connection."
-                )
+        try:
+            await websocket.send_json(payload)
+        except Exception:
+            self.disconnect(user_id, websocket)
+            logger.exception(
+                "Removed a failed Notification WebSocket connection."
+            )
 
 
 notification_connection_manager = NotificationConnectionManager()
