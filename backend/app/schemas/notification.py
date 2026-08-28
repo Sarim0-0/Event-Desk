@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import NotificationType
 
@@ -19,3 +19,9 @@ class NotificationResponse(BaseModel):
     related_review_id: UUID | None
     read_at: datetime | None
     created_at: datetime
+
+
+class NotificationsReadAllResponse(BaseModel):
+    """Number of unread Notifications changed by a mark-all operation."""
+
+    updated_count: int = Field(ge=0)

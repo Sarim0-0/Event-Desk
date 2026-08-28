@@ -30,3 +30,9 @@ class NotificationType(str, Enum):
     EVENT_CANCELLED = "event_cancelled"
     EVENT_REVIEWED = "event_reviewed"
     REVIEW_REPLIED = "review_replied"
+
+
+class NotificationContextFilter(str, Enum):
+    ALL = "all"
+    BOOKING = "booking"
+    REVIEW = "review"
