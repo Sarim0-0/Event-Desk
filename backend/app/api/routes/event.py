@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from app.api.dependencies import (
     DatabaseSession,
@@ -15,16 +15,40 @@ from app.core.permissions import (
     CREATE_EVENTS,
     EDIT_ANY_EVENT,
     EDIT_OWN_EVENT,
+    VIEW_PUBLISHED_EVENTS,
 )
 from app.models.user import User
-from app.schemas.event import EventCreateRequest, EventResponse, EventUpdate
-from app.services.event import cancel_event, create_event, update_event
+from app.schemas.event import (
+    EventCreateRequest,
+    EventListQuery,
+    EventResponse,
+    EventUpdate,
+    PaginatedEventsResponse,
+)
+from app.services.event import cancel_event, create_event, list_events, update_event
 from app.tasks.notification import (
     create_event_cancellation_notifications_in_background,
 )
 
 
 router = APIRouter(prefix="/events", tags=["Events"])
+
+
+@router.get(
+    "",
+    response_model=PaginatedEventsResponse,
+    status_code=status.HTTP_200_OK,
+    name="list_events",
+)
+async def list_events_endpoint(
+    query: Annotated[EventListQuery, Query()],
+    current_user: Annotated[
+        User,
+        Depends(require_permission(VIEW_PUBLISHED_EVENTS)),
+    ],
+    session: DatabaseSession,
+) -> PaginatedEventsResponse:
+    return await list_events(session, query)
 
 
 @router.post(
