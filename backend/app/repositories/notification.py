@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking
-from app.models.enums import NotificationType
+from app.models.enums import BookingStatus, EventStatus, NotificationType
 from app.models.event import Event
 from app.models.notification import Notification
 from app.models.review import Review
@@ -41,6 +41,26 @@ async def get_reviewed_event_organizer_id(
         .where(Review.id == review_id)
     )
     return await session.scalar(statement)
+
+
+async def get_cancelled_event_booking_contexts(
+    session: AsyncSession,
+    event_id: UUID,
+) -> list[tuple[UUID, UUID]]:
+    """Return confirmed Booking contexts for a cancelled Event."""
+
+    statement = (
+        select(Booking.id, Booking.user_id)
+        .join(Event, Booking.event_id == Event.id)
+        .where(
+            Event.id == event_id,
+            Event.status == EventStatus.CANCELLED,
+            Event.deleted_at.is_not(None),
+            Booking.status == BookingStatus.CONFIRMED,
+        )
+    )
+    rows = (await session.execute(statement)).all()
+    return [(row.id, row.user_id) for row in rows]
 
 
 def add_notification(
