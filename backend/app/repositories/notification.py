@@ -10,47 +10,74 @@ from app.models.notification import Notification
 from app.models.review import Review
 
 
-async def get_booking_owner_id(
+async def get_booking_notification_context(
     session: AsyncSession,
     booking_id: UUID,
-) -> UUID | None:
-    statement = select(Booking.user_id).where(Booking.id == booking_id)
-    return await session.scalar(statement)
+) -> tuple[UUID, str] | None:
+    statement = (
+        select(
+            Booking.user_id,
+            Event.title.label("event_title"),
+        )
+        .join(Event, Booking.event_id == Event.id)
+        .where(Booking.id == booking_id)
+    )
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        return None
+    return row.user_id, row.event_title
 
 
-async def get_review_author_id(
+async def get_review_author_notification_context(
     session: AsyncSession,
     review_id: UUID,
-) -> UUID | None:
+) -> tuple[UUID, str] | None:
     statement = (
-        select(Booking.user_id)
+        select(
+            Booking.user_id,
+            Event.title.label("event_title"),
+        )
         .join(Review, Review.booking_id == Booking.id)
+        .join(Event, Booking.event_id == Event.id)
         .where(Review.id == review_id)
     )
-    return await session.scalar(statement)
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        return None
+    return row.user_id, row.event_title
 
 
-async def get_reviewed_event_organizer_id(
+async def get_reviewed_event_notification_context(
     session: AsyncSession,
     review_id: UUID,
-) -> UUID | None:
+) -> tuple[UUID, str] | None:
     statement = (
-        select(Event.organizer_id)
+        select(
+            Event.organizer_id.label("user_id"),
+            Event.title.label("event_title"),
+        )
         .join(Booking, Booking.event_id == Event.id)
         .join(Review, Review.booking_id == Booking.id)
         .where(Review.id == review_id)
     )
-    return await session.scalar(statement)
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        return None
+    return row.user_id, row.event_title
 
 
 async def get_cancelled_event_booking_contexts(
     session: AsyncSession,
     event_id: UUID,
-) -> list[tuple[UUID, UUID]]:
+) -> list[tuple[UUID, UUID, str]]:
     """Return confirmed Booking contexts for a cancelled Event."""
 
     statement = (
-        select(Booking.id, Booking.user_id)
+        select(
+            Booking.id,
+            Booking.user_id,
+            Event.title.label("event_title"),
+        )
         .join(Event, Booking.event_id == Event.id)
         .where(
             Event.id == event_id,
@@ -60,7 +87,10 @@ async def get_cancelled_event_booking_contexts(
         )
     )
     rows = (await session.execute(statement)).all()
-    return [(row.id, row.user_id) for row in rows]
+    return [
+        (row.id, row.user_id, row.event_title)
+        for row in rows
+    ]
 
 
 def add_notification(

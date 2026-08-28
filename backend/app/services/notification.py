@@ -16,12 +16,22 @@ _BOOKING_NOTIFICATION_TYPES = frozenset(
     }
 )
 
-_NOTIFICATION_MESSAGES = {
-    NotificationType.BOOKING_CONFIRMED: "Your booking has been confirmed.",
-    NotificationType.BOOKING_CANCELLED: "Your booking has been cancelled.",
-    NotificationType.EVENT_CANCELLED: "An event you booked has been cancelled.",
-    NotificationType.EVENT_REVIEWED: "Your event has received a new review.",
-    NotificationType.REVIEW_REPLIED: "Your review has received a new reply.",
+_NOTIFICATION_MESSAGE_TEMPLATES = {
+    NotificationType.BOOKING_CONFIRMED: (
+        'Your booking for "{event_title}" has been confirmed.'
+    ),
+    NotificationType.BOOKING_CANCELLED: (
+        'Your booking for "{event_title}" has been cancelled.'
+    ),
+    NotificationType.EVENT_CANCELLED: (
+        'The event "{event_title}" has been cancelled.'
+    ),
+    NotificationType.EVENT_REVIEWED: (
+        'Your event "{event_title}" has received a new review.'
+    ),
+    NotificationType.REVIEW_REPLIED: (
+        'Your review for "{event_title}" has received a new reply.'
+    ),
 }
 
 
@@ -35,7 +45,7 @@ async def create_notification(
     """Persist one trusted, server-created Notification."""
 
     try:
-        user_id = await _resolve_recipient_id(
+        user_id, event_title = await _resolve_notification_context(
             session,
             notification_type=notification_type,
             related_booking_id=related_booking_id,
@@ -46,7 +56,7 @@ async def create_notification(
             session,
             user_id=user_id,
             notification_type=notification_type,
-            message=_NOTIFICATION_MESSAGES[notification_type],
+            message=_build_message(notification_type, event_title),
             related_booking_id=related_booking_id,
             related_review_id=related_review_id,
         )
@@ -87,13 +97,14 @@ async def create_event_cancellation_notifications(
                 session,
                 user_id=user_id,
                 notification_type=NotificationType.EVENT_CANCELLED,
-                message=_NOTIFICATION_MESSAGES[
-                    NotificationType.EVENT_CANCELLED
-                ],
+                message=_build_message(
+                    NotificationType.EVENT_CANCELLED,
+                    event_title,
+                ),
                 related_booking_id=booking_id,
                 related_review_id=None,
             )
-            for booking_id, user_id in booking_contexts
+            for booking_id, user_id, event_title in booking_contexts
         ]
 
         for notification in notifications:
@@ -118,25 +129,27 @@ async def create_event_cancellation_notifications(
         raise
 
 
-async def _resolve_recipient_id(
+async def _resolve_notification_context(
     session: AsyncSession,
     *,
     notification_type: NotificationType,
     related_booking_id: UUID | None,
     related_review_id: UUID | None,
-) -> UUID:
+) -> tuple[UUID, str]:
     if notification_type in _BOOKING_NOTIFICATION_TYPES:
         booking_id = _require_booking_context(
             related_booking_id=related_booking_id,
             related_review_id=related_review_id,
         )
-        user_id = await notification_repository.get_booking_owner_id(
-            session,
-            booking_id,
+        context = (
+            await notification_repository.get_booking_notification_context(
+                session,
+                booking_id,
+            )
         )
-        if user_id is None:
+        if context is None:
             raise NotFoundError("The notification Booking does not exist.")
-        return user_id
+        return context
 
     review_id = _require_review_context(
         related_booking_id=related_booking_id,
@@ -144,23 +157,34 @@ async def _resolve_recipient_id(
     )
 
     if notification_type is NotificationType.EVENT_REVIEWED:
-        user_id = (
-            await notification_repository.get_reviewed_event_organizer_id(
+        context = (
+            await notification_repository.get_reviewed_event_notification_context(
                 session,
                 review_id,
             )
         )
     elif notification_type is NotificationType.REVIEW_REPLIED:
-        user_id = await notification_repository.get_review_author_id(
-            session,
-            review_id,
+        context = (
+            await notification_repository.get_review_author_notification_context(
+                session,
+                review_id,
+            )
         )
     else:
         raise ValueError("Unsupported notification type.")
 
-    if user_id is None:
+    if context is None:
         raise NotFoundError("The notification Review does not exist.")
-    return user_id
+    return context
+
+
+def _build_message(
+    notification_type: NotificationType,
+    event_title: str,
+) -> str:
+    return _NOTIFICATION_MESSAGE_TEMPLATES[notification_type].format(
+        event_title=event_title,
+    )
 
 
 def _require_booking_context(
