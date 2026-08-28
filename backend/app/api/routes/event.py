@@ -26,6 +26,9 @@ from app.schemas.event import (
     PaginatedEventsResponse,
 )
 from app.services.event import cancel_event, create_event, list_events, update_event
+from app.tasks.event_availability import (
+    broadcast_event_availability_in_background,
+)
 from app.tasks.notification import (
     create_event_cancellation_notifications_in_background,
 )
@@ -76,6 +79,7 @@ async def create_event_endpoint(
 async def update_event_endpoint(
     event_id: UUID,
     request: EventUpdate,
+    background_tasks: BackgroundTasks,
     permission_grant: Annotated[
         PermissionGrant,
         Depends(
@@ -87,7 +91,7 @@ async def update_event_endpoint(
     ],
     session: DatabaseSession,
 ) -> EventResponse:
-    return await update_event(
+    event = await update_event(
         session,
         permission_grant.user,
         event_id,
@@ -95,6 +99,12 @@ async def update_event_endpoint(
         can_edit_own=permission_grant.allows(EDIT_OWN_EVENT),
         can_edit_any=permission_grant.allows(EDIT_ANY_EVENT),
     )
+    if "total_tickets" in request.model_fields_set:
+        background_tasks.add_task(
+            broadcast_event_availability_in_background,
+            event_id=event.id,
+        )
+    return event
 
 
 @router.post(
