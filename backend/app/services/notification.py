@@ -1,11 +1,16 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
-from app.models.enums import NotificationType
+from app.models.enums import NotificationContextFilter, NotificationType
+from app.models.user import User
 from app.repositories import notification as notification_repository
-from app.schemas.notification import NotificationResponse
+from app.schemas.notification import (
+    NotificationResponse,
+    NotificationsReadAllResponse,
+)
 
 
 _BOOKING_NOTIFICATION_TYPES = frozenset(
@@ -33,6 +38,86 @@ _NOTIFICATION_MESSAGE_TEMPLATES = {
         'Your review for "{event_title}" has received a new reply.'
     ),
 }
+
+
+async def list_notifications(
+    session: AsyncSession,
+    current_user: User,
+    context_filter: NotificationContextFilter = NotificationContextFilter.ALL,
+) -> list[NotificationResponse]:
+    """Return only Notifications belonging to the authenticated User."""
+
+    notifications = await notification_repository.list_user_notifications(
+        session,
+        user_id=current_user.id,
+        context_filter=context_filter,
+    )
+    return [
+        NotificationResponse.model_validate(notification)
+        for notification in notifications
+    ]
+
+
+async def mark_notification_read(
+    session: AsyncSession,
+    current_user: User,
+    notification_id: UUID,
+) -> NotificationResponse:
+    """Mark one owned Notification as read."""
+
+    try:
+        notification = (
+            await notification_repository.get_user_notification_by_id(
+                session,
+                notification_id=notification_id,
+                user_id=current_user.id,
+            )
+        )
+        if notification is None:
+            raise NotFoundError("The selected notification does not exist.")
+
+        notification_repository.mark_notification_as_read(
+            notification,
+            read_at=datetime.now(timezone.utc),
+        )
+        await notification_repository.flush_notification(
+            session,
+            notification,
+        )
+
+        response = NotificationResponse.model_validate(notification)
+
+        await session.commit()
+        return response
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def mark_all_notifications_read(
+    session: AsyncSession,
+    current_user: User,
+) -> NotificationsReadAllResponse:
+    """Mark every unread Notification belonging to the User as read."""
+
+    try:
+        updated_count = (
+            await notification_repository.mark_all_user_notifications_as_read(
+                session,
+                user_id=current_user.id,
+                read_at=datetime.now(timezone.utc),
+            )
+        )
+
+        response = NotificationsReadAllResponse(
+            updated_count=updated_count,
+        )
+
+        await session.commit()
+        return response
+    except Exception:
+        await session.rollback()
+        raise
 
 
 async def create_notification(
