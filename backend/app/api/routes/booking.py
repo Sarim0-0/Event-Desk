@@ -18,6 +18,9 @@ from app.models.enums import NotificationType
 from app.models.user import User
 from app.schemas.booking import BookingCreate, BookingResponse
 from app.services.booking import cancel_booking, create_booking
+from app.tasks.event_availability import (
+    broadcast_event_availability_in_background,
+)
 from app.tasks.notification import create_notification_in_background
 
 
@@ -44,6 +47,10 @@ async def create_booking_endpoint(
         create_notification_in_background,
         notification_type=NotificationType.BOOKING_CONFIRMED,
         related_booking_id=booking.id,
+    )
+    background_tasks.add_task(
+        broadcast_event_availability_in_background,
+        event_id=booking.event_id,
     )
     return booking
 
@@ -79,5 +86,9 @@ async def cancel_booking_endpoint(
         create_notification_in_background,
         notification_type=NotificationType.BOOKING_CANCELLED,
         related_booking_id=booking.id,
+    )
+    background_tasks.add_task(
+        broadcast_event_availability_in_background,
+        event_id=booking.event_id,
     )
     return booking
