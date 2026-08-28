@@ -9,7 +9,61 @@ from app.models.enums import EventStatus
 from app.models.event import Tag
 from app.models.user import User
 from app.repositories import event as event_repository
-from app.schemas.event import EventCreateRequest, EventResponse, EventUpdate
+from app.schemas.event import (
+    EVENTS_PER_PAGE,
+    EventCreateRequest,
+    EventListQuery,
+    EventResponse,
+    EventUpdate,
+    PaginatedEventsResponse,
+)
+
+
+async def list_events(
+    session: AsyncSession,
+    query: EventListQuery,
+) -> PaginatedEventsResponse:
+    """Return one read-only page of visible, filtered Events."""
+
+    total_items = await event_repository.count_visible_events(
+        session,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    events = await event_repository.list_visible_events(
+        session,
+        page=query.page,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+
+    items = [
+        EventResponse(
+            id=event.id,
+            organizer_id=event.organizer_id,
+            title=event.title,
+            description=event.description,
+            venue=event.venue,
+            event_datetime=event.event_datetime,
+            ticket_price=event.ticket_price,
+            total_tickets=event.total_tickets,
+            tickets_available=event.tickets_available,
+            category_id=event.category_id,
+            tag_ids=[tag.id for tag in event.tags],
+            status=event.status,
+            created_at=event.created_at,
+            updated_at=event.updated_at,
+        )
+        for event in events
+    ]
+    total_pages = (total_items + EVENTS_PER_PAGE - 1) // EVENTS_PER_PAGE
+
+    return PaginatedEventsResponse(
+        items=items,
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
 
 
 async def create_event(
