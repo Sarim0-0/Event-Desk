@@ -68,6 +68,56 @@ async def create_notification(
         raise
 
 
+async def create_event_cancellation_notifications(
+    session: AsyncSession,
+    *,
+    event_id: UUID,
+) -> list[NotificationResponse]:
+    """Persist one Event-cancelled Notification per distinct booked User."""
+
+    try:
+        booking_contexts = (
+            await notification_repository.get_cancelled_event_booking_contexts(
+                session,
+                event_id,
+            )
+        )
+        notifications = [
+            notification_repository.add_notification(
+                session,
+                user_id=user_id,
+                notification_type=NotificationType.EVENT_CANCELLED,
+                message=_NOTIFICATION_MESSAGES[
+                    NotificationType.EVENT_CANCELLED
+                ],
+                related_booking_id=booking_id,
+                related_review_id=None,
+            )
+            for booking_id, user_id in booking_contexts
+        ]
+
+        for notification in notifications:
+            await notification_repository.flush_notification(
+                session,
+                notification,
+            )
+            await notification_repository.refresh_notification(
+                session,
+                notification,
+            )
+
+        responses = [
+            NotificationResponse.model_validate(notification)
+            for notification in notifications
+        ]
+
+        await session.commit()
+        return responses
+    except Exception:
+        await session.rollback()
+        raise
+
+
 async def _resolve_recipient_id(
     session: AsyncSession,
     *,
