@@ -90,6 +90,27 @@ async def list_visible_events(
     return list(events.all())
 
 
+async def get_published_event_availability(
+    session: AsyncSession,
+    event_id: UUID,
+) -> tuple[UUID, int, int] | None:
+    statement = select(
+        Event.id,
+        Event.total_tickets,
+        Event.tickets_available,
+    ).where(
+        Event.id == event_id,
+        *_visible_event_conditions(
+            category_id=None,
+            tag_ids=(),
+        ),
+    )
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        return None
+    return row.id, row.total_tickets, row.tickets_available
+
+
 async def get_event_for_update(
     session: AsyncSession,
     event_id: UUID,

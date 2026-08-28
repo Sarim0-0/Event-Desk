@@ -11,6 +11,7 @@ from app.models.user import User
 from app.repositories import event as event_repository
 from app.schemas.event import (
     EVENTS_PER_PAGE,
+    EventAvailabilityResponse,
     EventCreateRequest,
     EventListQuery,
     EventResponse,
@@ -63,6 +64,27 @@ async def list_events(
         page=query.page,
         total_items=total_items,
         total_pages=total_pages,
+    )
+
+
+async def get_event_availability(
+    session: AsyncSession,
+    event_id: UUID,
+) -> EventAvailabilityResponse | None:
+    """Return current inventory only for a published, visible Event."""
+
+    availability = await event_repository.get_published_event_availability(
+        session,
+        event_id,
+    )
+    if availability is None:
+        return None
+
+    visible_event_id, total_tickets, tickets_available = availability
+    return EventAvailabilityResponse(
+        event_id=visible_event_id,
+        total_tickets=total_tickets,
+        tickets_available=tickets_available,
     )
 
 
