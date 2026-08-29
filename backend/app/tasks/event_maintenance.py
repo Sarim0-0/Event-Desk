@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from app.database.session import async_session_factory
 from app.realtime.manager import notification_connection_manager
 from app.repositories import reminder as reminder_repository
+from app.services.event_maintenance import complete_past_events_batch
 from app.services.reminder import REMINDER_WINDOW, send_event_reminder_batch
 
 
@@ -43,3 +44,13 @@ async def send_due_event_reminders() -> None:
                 "Scheduled reminder processing failed for Event %s.",
                 event_id,
             )
+
+
+async def complete_past_events() -> None:
+    """Complete eligible past Events without crashing the application."""
+
+    try:
+        async with async_session_factory() as session:
+            await complete_past_events_batch(session)
+    except Exception:
+        logger.exception("Scheduled Event completion failed.")

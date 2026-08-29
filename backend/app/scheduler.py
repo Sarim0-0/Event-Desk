@@ -34,11 +34,18 @@ def register_minutely_job(job: ScheduledJob, *, job_id: str) -> None:
 def register_scheduler_jobs() -> None:
     """Register the jobs implemented by the current maintenance phases."""
 
-    from app.tasks.event_maintenance import send_due_event_reminders
+    from app.tasks.event_maintenance import (
+        complete_past_events,
+        send_due_event_reminders,
+    )
 
     register_minutely_job(
         send_due_event_reminders,
         job_id=SEND_DUE_EVENT_REMINDERS_JOB_ID,
+    )
+    register_minutely_job(
+        complete_past_events,
+        job_id=COMPLETE_PAST_EVENTS_JOB_ID,
     )
 
 

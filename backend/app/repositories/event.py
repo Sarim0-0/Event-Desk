@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -146,6 +146,30 @@ async def get_event_for_cancellation_for_update(
         .with_for_update()
     )
     return await session.scalar(statement)
+
+
+async def complete_past_published_events(
+    session: AsyncSession,
+    *,
+    current_time: datetime,
+) -> int:
+    """Conditionally complete only Events that are still published and past."""
+
+    statement = (
+        update(Event)
+        .where(
+            Event.status == EventStatus.PUBLISHED,
+            Event.deleted_at.is_(None),
+            Event.event_datetime <= current_time,
+        )
+        .values(
+            status=EventStatus.COMPLETED,
+            updated_at=current_time,
+        )
+        .returning(Event.id)
+    )
+    completed_event_ids = await session.scalars(statement)
+    return len(completed_event_ids.all())
 
 
 async def get_category_by_id(
