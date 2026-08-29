@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 
 from app.api.dependencies import (
     DatabaseSession,
@@ -12,8 +12,10 @@ from app.core.permissions import (
     REPLY_TO_ANY_REVIEW,
     REPLY_TO_OWN_EVENT_REVIEWS,
 )
+from app.models.enums import NotificationType
 from app.schemas.reply import ReplyCreate, ReplyResponse
 from app.services.reply import create_reply
+from app.tasks.notification import create_notification_in_background
 
 
 router = APIRouter(prefix="/reviews", tags=["Replies"])
@@ -28,6 +30,7 @@ router = APIRouter(prefix="/reviews", tags=["Replies"])
 async def create_reply_endpoint(
     review_id: UUID,
     request: ReplyCreate,
+    background_tasks: BackgroundTasks,
     permission_grant: Annotated[
         PermissionGrant,
         Depends(
@@ -39,7 +42,7 @@ async def create_reply_endpoint(
     ],
     session: DatabaseSession,
 ) -> ReplyResponse:
-    return await create_reply(
+    reply = await create_reply(
         session,
         permission_grant.user,
         review_id,
@@ -49,3 +52,9 @@ async def create_reply_endpoint(
         ),
         can_reply_any=permission_grant.allows(REPLY_TO_ANY_REVIEW),
     )
+    background_tasks.add_task(
+        create_notification_in_background,
+        notification_type=NotificationType.REVIEW_REPLIED,
+        related_review_id=reply.review_id,
+    )
+    return reply

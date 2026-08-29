@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import (
@@ -12,6 +12,9 @@ from pydantic import (
 )
 
 from app.models.enums import EventStatus
+
+
+EVENTS_PER_PAGE = 6
 
 
 class EventCreateRequest(BaseModel):
@@ -176,3 +179,39 @@ class EventResponse(BaseModel):
     status: EventStatus
     created_at: datetime
     updated_at: datetime
+
+
+class EventListQuery(BaseModel):
+    """Validated pagination and filtering values for Event listing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(default=1, ge=1)
+    category_id: UUID | None = None
+    tag_ids: list[UUID] = Field(default_factory=list)
+
+    @field_validator("tag_ids")
+    @classmethod
+    def remove_duplicate_filter_tag_ids(
+        cls,
+        tag_ids: list[UUID],
+    ) -> list[UUID]:
+        return list(dict.fromkeys(tag_ids))
+
+
+class PaginatedEventsResponse(BaseModel):
+    """One fixed-size page of visible Events and its pagination metadata."""
+
+    items: list[EventResponse]
+    page: int = Field(ge=1)
+    page_size: Literal[6] = EVENTS_PER_PAGE
+    total_items: int = Field(ge=0)
+    total_pages: int = Field(ge=0)
+
+
+class EventAvailabilityResponse(BaseModel):
+    """Current ticket inventory for a visible Event."""
+
+    event_id: UUID
+    total_tickets: int
+    tickets_available: int

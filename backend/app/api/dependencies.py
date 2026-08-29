@@ -1,11 +1,20 @@
 from dataclasses import dataclass
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import (
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketException,
+    status,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AuthenticationError, ForbiddenError
 from app.database.dependencies import get_db_session
+from app.database.session import async_session_factory
 from app.models.user import User
 from app.repositories.rbac import get_role_permission_keys, role_has_permission
 from app.services.auth import get_authenticated_user
@@ -31,6 +40,21 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_current_websocket_user_id(websocket: WebSocket) -> UUID:
+    """Authenticate a WebSocket without keeping a database session open."""
+
+    async with async_session_factory() as session:
+        user = await _get_authenticated_websocket_user(session, websocket)
+
+    return user.id
+
+
+CurrentWebSocketUserId = Annotated[
+    UUID,
+    Depends(get_current_websocket_user_id),
+]
 
 
 @dataclass(frozen=True)
@@ -94,9 +118,60 @@ def require_any_permission(*permission_keys: str):
     return permission_dependency
 
 
+def require_websocket_permission(permission_key: str):
+    """Authenticate a WebSocket and require one database permission."""
+
+    async def permission_dependency(websocket: WebSocket) -> UUID:
+        async with async_session_factory() as session:
+            user = await _get_authenticated_websocket_user(
+                session,
+                websocket,
+            )
+            has_permission = await role_has_permission(
+                session,
+                user.role_id,
+                permission_key,
+            )
+
+        if not has_permission:
+            raise _websocket_permission_exception()
+
+        return user.id
+
+    return permission_dependency
+
+
 def _credentials_exception() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials.",
         headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _get_authenticated_websocket_user(
+    session: AsyncSession,
+    websocket: WebSocket,
+) -> User:
+    access_token = websocket.query_params.get("token")
+    if access_token is None:
+        raise _websocket_credentials_exception()
+
+    try:
+        return await get_authenticated_user(session, access_token)
+    except (AuthenticationError, ForbiddenError) as error:
+        raise _websocket_credentials_exception() from error
+
+
+def _websocket_credentials_exception() -> WebSocketException:
+    return WebSocketException(
+        code=status.WS_1008_POLICY_VIOLATION,
+        reason="Could not validate credentials.",
+    )
+
+
+def _websocket_permission_exception() -> WebSocketException:
+    return WebSocketException(
+        code=status.WS_1008_POLICY_VIOLATION,
+        reason="You do not have permission to view Events.",
     )

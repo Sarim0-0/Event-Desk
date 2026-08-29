@@ -3,7 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +24,91 @@ _EDITABLE_EVENT_FIELDS = frozenset(
         "status",
     }
 )
+_EVENTS_PER_PAGE = 6
+
+
+def _visible_event_conditions(
+    *,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> tuple[ColumnElement[bool], ...]:
+    conditions: list[ColumnElement[bool]] = [
+        Event.status == EventStatus.PUBLISHED,
+        Event.deleted_at.is_(None),
+        Event.event_datetime > func.now(),
+    ]
+
+    if category_id is not None:
+        conditions.append(Event.category_id == category_id)
+
+    conditions.extend(
+        Event.event_tags.any(EventTag.tag_id == tag_id)
+        for tag_id in tag_ids
+    )
+    return tuple(conditions)
+
+
+async def count_visible_events(
+    session: AsyncSession,
+    *,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> int:
+    statement = select(func.count(Event.id)).where(
+        *_visible_event_conditions(
+            category_id=category_id,
+            tag_ids=tag_ids,
+        )
+    )
+    return int(await session.scalar(statement) or 0)
+
+
+async def list_visible_events(
+    session: AsyncSession,
+    *,
+    page: int,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> list[Event]:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.tags),
+        )
+        .where(
+            *_visible_event_conditions(
+                category_id=category_id,
+                tag_ids=tag_ids,
+            )
+        )
+        .order_by(Event.event_datetime, Event.id)
+        .offset((page - 1) * _EVENTS_PER_PAGE)
+        .limit(_EVENTS_PER_PAGE)
+    )
+    events = await session.scalars(statement)
+    return list(events.all())
+
+
+async def get_published_event_availability(
+    session: AsyncSession,
+    event_id: UUID,
+) -> tuple[UUID, int, int] | None:
+    statement = select(
+        Event.id,
+        Event.total_tickets,
+        Event.tickets_available,
+    ).where(
+        Event.id == event_id,
+        *_visible_event_conditions(
+            category_id=None,
+            tag_ids=(),
+        ),
+    )
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        return None
+    return row.id, row.total_tickets, row.tickets_available
 
 
 async def get_event_for_update(

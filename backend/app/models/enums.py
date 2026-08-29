@@ -22,3 +22,17 @@ class EventStatus(str, Enum):
     PUBLISHED = "published"
     CANCELLED = "cancelled"
     COMPLETED = "completed"
+
+
+class NotificationType(str, Enum):
+    BOOKING_CONFIRMED = "booking_confirmed"
+    BOOKING_CANCELLED = "booking_cancelled"
+    EVENT_CANCELLED = "event_cancelled"
+    EVENT_REVIEWED = "event_reviewed"
+    REVIEW_REPLIED = "review_replied"
+
+
+class NotificationContextFilter(str, Enum):
+    ALL = "all"
+    BOOKING = "booking"
+    REVIEW = "review"
