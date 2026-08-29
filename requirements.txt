@@ -1,5 +1,6 @@
 fastapi
 alembic
+APScheduler==3.11.3
 sqlalchemy[asyncio]
 asyncpg
 pydantic-settings
