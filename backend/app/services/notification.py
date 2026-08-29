@@ -18,6 +18,7 @@ _BOOKING_NOTIFICATION_TYPES = frozenset(
         NotificationType.BOOKING_CONFIRMED,
         NotificationType.BOOKING_CANCELLED,
         NotificationType.EVENT_CANCELLED,
+        NotificationType.EVENT_REMINDER,
     }
 )
 
@@ -30,6 +31,9 @@ _NOTIFICATION_MESSAGE_TEMPLATES = {
     ),
     NotificationType.EVENT_CANCELLED: (
         'The event "{event_title}" has been cancelled.'
+    ),
+    NotificationType.EVENT_REMINDER: (
+        'Reminder: the event "{event_title}" starts within 60 minutes.'
     ),
     NotificationType.EVENT_REVIEWED: (
         'Your event "{event_title}" has received a new review.'
@@ -159,7 +163,10 @@ async def create_notification(
             session,
             user_id=user_id,
             notification_type=notification_type,
-            message=_build_message(notification_type, event_title),
+            message=build_notification_message(
+                notification_type,
+                event_title,
+            ),
             related_booking_id=related_booking_id,
             related_review_id=related_review_id,
         )
@@ -200,7 +207,7 @@ async def create_event_cancellation_notifications(
                 session,
                 user_id=user_id,
                 notification_type=NotificationType.EVENT_CANCELLED,
-                message=_build_message(
+                message=build_notification_message(
                     NotificationType.EVENT_CANCELLED,
                     event_title,
                 ),
@@ -281,10 +288,12 @@ async def _resolve_notification_context(
     return context
 
 
-def _build_message(
+def build_notification_message(
     notification_type: NotificationType,
     event_title: str,
 ) -> str:
+    """Build a trusted server-side Notification message."""
+
     return _NOTIFICATION_MESSAGE_TEMPLATES[notification_type].format(
         event_title=event_title,
     )
