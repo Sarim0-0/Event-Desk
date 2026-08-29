@@ -201,6 +201,13 @@ def cancel_event(
     return event
 
 
+def reset_event_reminder(event: Event) -> Event:
+    """Allow a reminder to be sent again after the Event time changes."""
+
+    event.reminder_sent_at = None
+    return event
+
+
 async def flush_event(
     session: AsyncSession,
 ) -> None:
