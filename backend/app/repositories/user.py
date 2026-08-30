@@ -10,6 +10,18 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
 
+async def list_all_users(session: AsyncSession) -> list[User]:
+    """Load every User and their Role in deterministic newest-first order."""
+
+    statement = (
+        select(User)
+        .options(selectinload(User.role))
+        .order_by(User.created_at.desc(), User.id.desc())
+    )
+    users = await session.scalars(statement)
+    return list(users.all())
+
+
 async def get_user_by_id(
     session: AsyncSession,
     user_id: UUID,

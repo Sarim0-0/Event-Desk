@@ -26,6 +26,23 @@ from app.schemas.user import (
 from app.services import audit as audit_service
 
 
+async def list_all_users(session: AsyncSession) -> list[UserResponse]:
+    """Return safe response data for every User."""
+
+    users = await user_repository.list_all_users(session)
+    return [
+        UserResponse(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            role=user.role.name,
+            is_active=user.is_active,
+            created_at=user.created_at,
+        )
+        for user in users
+    ]
+
+
 async def change_user_role(
     session: AsyncSession,
     current_user: User,
