@@ -9,6 +9,7 @@ from app.core.permissions import (
     CHANGE_USER_ROLE,
     CHANGE_USER_STATUS,
     UPDATE_OWN_PROFILE,
+    VIEW_ALL_USERS,
 )
 from app.models.user import User
 from app.schemas.user import (
@@ -21,11 +22,28 @@ from app.services.user import (
     change_own_password,
     change_user_role,
     deactivate_user,
+    list_all_users,
     update_own_profile,
 )
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@router.get(
+    "",
+    response_model=list[UserResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_all_users",
+)
+async def list_all_users_endpoint(
+    current_user: Annotated[
+        User,
+        Depends(require_permission(VIEW_ALL_USERS)),
+    ],
+    session: DatabaseSession,
+) -> list[UserResponse]:
+    return await list_all_users(session)
 
 
 @router.patch(
