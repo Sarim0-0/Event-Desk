@@ -3,10 +3,25 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.rbac import Role
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
+
+
+async def get_user_by_id(
+    session: AsyncSession,
+    user_id: UUID,
+) -> User | None:
+    """Load a target User and their current Role."""
+
+    statement = (
+        select(User)
+        .options(selectinload(User.role))
+        .where(User.id == user_id)
+    )
+    return await session.scalar(statement)
 
 
 async def get_other_user_by_email(
@@ -52,6 +67,11 @@ def update_profile(
 
 def update_password_hash(user: User, password_hash: str) -> None:
     user.password_hash = password_hash
+
+
+def update_user_role(user: User, role: Role) -> User:
+    user.role = role
+    return user
 
 
 async def revoke_active_refresh_tokens(

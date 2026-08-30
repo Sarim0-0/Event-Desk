@@ -26,6 +26,14 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class UserRoleUpdate(BaseModel):
+    """Role selected by an Admin for an Attendee or Organizer account."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: RegistrationRole
+
+
 class UserProfileUpdate(BaseModel):
     """Editable fields for the authenticated User's own profile."""
 
