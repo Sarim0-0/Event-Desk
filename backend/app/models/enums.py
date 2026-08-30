@@ -37,3 +37,18 @@ class NotificationContextFilter(str, Enum):
     ALL = "all"
     BOOKING = "booking"
     REVIEW = "review"
+
+
+class AuditAction(str, Enum):
+    USER_ROLE_CHANGED = "user.role_changed"
+    EVENT_CREATED = "event.created"
+    EVENT_CANCELLED = "event.cancelled"
+    BOOKING_CREATED = "booking.created"
+    BOOKING_CANCELLED = "booking.cancelled"
+    EVENT_COMPLETED = "event.completed"
+
+
+class AuditEntityType(str, Enum):
+    USER = "user"
+    EVENT = "event"
+    BOOKING = "booking"
