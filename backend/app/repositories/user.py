@@ -74,6 +74,14 @@ def update_user_role(user: User, role: Role) -> User:
     return user
 
 
+def deactivate_user(user: User, deactivated_at: datetime) -> User:
+    """Mark the supplied User inactive without deleting their row."""
+
+    user.is_active = False
+    user.deleted_at = deactivated_at
+    return user
+
+
 async def revoke_active_refresh_tokens(
     session: AsyncSession,
     *,
@@ -105,6 +113,7 @@ async def refresh_user(session: AsyncSession, user: User) -> User:
             "email",
             "role_id",
             "is_active",
+            "deleted_at",
             "created_at",
             "updated_at",
         ],
