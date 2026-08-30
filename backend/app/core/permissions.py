@@ -15,6 +15,7 @@ VIEW_PUBLISHED_EVENTS = "events.view_published"
 CREATE_BOOKINGS = "bookings.create"
 CANCEL_ANY_BOOKING = "bookings.cancel_any"
 CANCEL_OWN_BOOKING = "bookings.cancel_own"
+VIEW_OWN_BOOKINGS = "bookings.view_own"
 
 CREATE_REVIEWS = "reviews.create"
 REPLY_TO_ANY_REVIEW = "reviews.reply_any"
