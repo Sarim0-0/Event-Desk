@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,7 @@ from app.core.exceptions import (
     AuthenticationError,
     ConflictError,
     ForbiddenError,
+    NotFoundError,
     ServiceUnavailableError,
 )
 from app.core.security import hash_password, verify_password
@@ -19,8 +21,64 @@ from app.schemas.user import (
     PasswordChangeRequest,
     UserProfileUpdate,
     UserResponse,
+    UserRoleUpdate,
 )
 from app.services import audit as audit_service
+
+
+async def change_user_role(
+    session: AsyncSession,
+    current_user: User,
+    user_id: UUID,
+    request: UserRoleUpdate,
+) -> UserResponse:
+    """Change an Attendee or Organizer Role after route authorization."""
+
+    try:
+        target_user = await user_repository.get_user_by_id(session, user_id)
+        if target_user is None or target_user.deleted_at is not None:
+            raise NotFoundError("The selected User does not exist.")
+
+        if target_user.role.name == UserRole.ADMIN.value:
+            raise ForbiddenError("Admin account roles cannot be changed.")
+
+        role = await user_repository.get_role_by_name(
+            session,
+            request.role.value,
+        )
+        if role is None:
+            raise ServiceUnavailableError(
+                "Role management is temporarily unavailable."
+            )
+
+        role_changed = target_user.role_id != role.id
+        if role_changed:
+            user_repository.update_user_role(target_user, role)
+            await user_repository.flush_user(session, target_user)
+            await user_repository.refresh_user(session, target_user)
+
+            audit_service.record_action(
+                session,
+                actor_id=current_user.id,
+                action=AuditAction.USER_ROLE_CHANGED,
+                entity_type=AuditEntityType.USER,
+                entity_id=target_user.id,
+            )
+
+        response = UserResponse(
+            id=target_user.id,
+            name=target_user.name,
+            email=target_user.email,
+            role=(role.name if role_changed else target_user.role.name),
+            is_active=target_user.is_active,
+            created_at=target_user.created_at,
+        )
+
+        await session.commit()
+        return response
+    except Exception:
+        await session.rollback()
+        raise
 
 
 async def update_own_profile(
