@@ -13,8 +13,40 @@ from app.models.enums import (
 )
 from app.models.user import User
 from app.repositories import booking as booking_repository
-from app.schemas.booking import BookingCreate, BookingResponse
+from app.schemas.booking import (
+    BOOKINGS_PER_PAGE,
+    BookingCreate,
+    BookingListQuery,
+    BookingResponse,
+    PaginatedBookingsResponse,
+)
 from app.services import audit as audit_service
+
+
+async def list_own_bookings(
+    session: AsyncSession,
+    current_user: User,
+    query: BookingListQuery,
+) -> PaginatedBookingsResponse:
+    """Return one read-only page of the authenticated User's Bookings."""
+
+    total_items = await booking_repository.count_bookings_by_user(
+        session,
+        current_user.id,
+    )
+    bookings = await booking_repository.list_bookings_by_user(
+        session,
+        user_id=current_user.id,
+        page=query.page,
+    )
+    total_pages = (total_items + BOOKINGS_PER_PAGE - 1) // BOOKINGS_PER_PAGE
+
+    return PaginatedBookingsResponse(
+        items=[BookingResponse.model_validate(booking) for booking in bookings],
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
 
 
 async def create_booking(
