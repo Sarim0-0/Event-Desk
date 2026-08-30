@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import AuditAction, AuditEntityType
 from app.models.log import Log
 from app.repositories import audit as audit_repository
+from app.schemas.log import LogResponse
 
 
 def record_action(
@@ -24,3 +25,12 @@ def record_action(
         entity_type=entity_type,
         entity_id=entity_id,
     )
+
+
+async def list_audit_logs(
+    session: AsyncSession,
+) -> list[LogResponse]:
+    """Return all audit records after route-level authorization succeeds."""
+
+    logs = await audit_repository.list_logs(session)
+    return [LogResponse.model_validate(log) for log in logs]

@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import AuditAction, AuditEntityType
@@ -24,3 +25,14 @@ def add_log(
     )
     session.add(log)
     return log
+
+
+async def list_logs(session: AsyncSession) -> list[Log]:
+    """Return the complete audit history from newest to oldest."""
+
+    statement = (
+        select(Log)
+        .order_by(Log.created_at.desc(), Log.id.desc())
+    )
+    logs = await session.scalars(statement)
+    return list(logs.all())
