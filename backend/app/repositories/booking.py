@@ -1,12 +1,42 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking
 from app.models.enums import BookingStatus
 from app.models.event import Event
+
+
+_BOOKINGS_PER_PAGE = 5
+
+
+async def count_bookings_by_user(
+    session: AsyncSession,
+    user_id: UUID,
+) -> int:
+    statement = select(func.count(Booking.id)).where(
+        Booking.user_id == user_id,
+    )
+    return int(await session.scalar(statement) or 0)
+
+
+async def list_bookings_by_user(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    page: int,
+) -> list[Booking]:
+    statement = (
+        select(Booking)
+        .where(Booking.user_id == user_id)
+        .order_by(Booking.booked_at.desc(), Booking.id.desc())
+        .offset((page - 1) * _BOOKINGS_PER_PAGE)
+        .limit(_BOOKINGS_PER_PAGE)
+    )
+    bookings = await session.scalars(statement)
+    return list(bookings.all())
 
 
 async def get_event_for_booking_for_update(
