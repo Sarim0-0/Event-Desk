@@ -1,16 +1,26 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
 from app.api.dependencies import DatabaseSession, require_permission
-from app.core.permissions import CHANGE_OWN_PASSWORD, UPDATE_OWN_PROFILE
+from app.core.permissions import (
+    CHANGE_OWN_PASSWORD,
+    CHANGE_USER_ROLE,
+    UPDATE_OWN_PROFILE,
+)
 from app.models.user import User
 from app.schemas.user import (
     PasswordChangeRequest,
     UserProfileUpdate,
     UserResponse,
+    UserRoleUpdate,
 )
-from app.services.user import change_own_password, update_own_profile
+from app.services.user import (
+    change_own_password,
+    change_user_role,
+    update_own_profile,
+)
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -48,3 +58,26 @@ async def change_own_password_endpoint(
     session: DatabaseSession,
 ) -> None:
     await change_own_password(session, current_user, request)
+
+
+@router.patch(
+    "/{user_id}/role",
+    response_model=UserResponse,
+    status_code=status.HTTP_200_OK,
+    name="change_user_role",
+)
+async def change_user_role_endpoint(
+    user_id: UUID,
+    request: UserRoleUpdate,
+    current_user: Annotated[
+        User,
+        Depends(require_permission(CHANGE_USER_ROLE)),
+    ],
+    session: DatabaseSession,
+) -> UserResponse:
+    return await change_user_role(
+        session,
+        current_user,
+        user_id,
+        request,
+    )
