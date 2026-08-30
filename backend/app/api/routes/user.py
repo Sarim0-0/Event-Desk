@@ -3,12 +3,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
-from app.api.dependencies import DatabaseSession, require_permission
+from app.api.dependencies import (
+    CurrentUser,
+    DatabaseSession,
+    require_permission,
+)
 from app.core.permissions import (
-    CHANGE_OWN_PASSWORD,
     CHANGE_USER_ROLE,
     CHANGE_USER_STATUS,
-    UPDATE_OWN_PROFILE,
     VIEW_ALL_USERS,
 )
 from app.models.user import User
@@ -54,10 +56,7 @@ async def list_all_users_endpoint(
 )
 async def update_own_profile_endpoint(
     request: UserProfileUpdate,
-    current_user: Annotated[
-        User,
-        Depends(require_permission(UPDATE_OWN_PROFILE)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> UserResponse:
     return await update_own_profile(session, current_user, request)
@@ -71,10 +70,7 @@ async def update_own_profile_endpoint(
 )
 async def change_own_password_endpoint(
     request: PasswordChangeRequest,
-    current_user: Annotated[
-        User,
-        Depends(require_permission(CHANGE_OWN_PASSWORD)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> None:
     await change_own_password(session, current_user, request)

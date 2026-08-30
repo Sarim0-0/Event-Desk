@@ -4,20 +4,18 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, status
 
 from app.api.dependencies import (
+    CurrentUser,
     DatabaseSession,
     PermissionGrant,
     require_any_permission,
-    require_permission,
 )
 from app.core.permissions import (
-    CREATE_REVIEWS,
     DELETE_ANY_REVIEW,
     DELETE_OWN_REVIEW,
     EDIT_ANY_REVIEW,
     EDIT_OWN_REVIEW,
 )
 from app.models.enums import NotificationType
-from app.models.user import User
 from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
 from app.services.review import create_review, delete_review, update_review
 from app.tasks.notification import create_notification_in_background
@@ -35,10 +33,7 @@ router = APIRouter(prefix="/reviews", tags=["Reviews"])
 async def create_review_endpoint(
     request: ReviewCreate,
     background_tasks: BackgroundTasks,
-    current_user: Annotated[
-        User,
-        Depends(require_permission(CREATE_REVIEWS)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> ReviewResponse:
     review = await create_review(session, current_user, request)

@@ -118,29 +118,6 @@ def require_any_permission(*permission_keys: str):
     return permission_dependency
 
 
-def require_websocket_permission(permission_key: str):
-    """Authenticate a WebSocket and require one database permission."""
-
-    async def permission_dependency(websocket: WebSocket) -> UUID:
-        async with async_session_factory() as session:
-            user = await _get_authenticated_websocket_user(
-                session,
-                websocket,
-            )
-            has_permission = await role_has_permission(
-                session,
-                user.role_id,
-                permission_key,
-            )
-
-        if not has_permission:
-            raise _websocket_permission_exception()
-
-        return user.id
-
-    return permission_dependency
-
-
 def _credentials_exception() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -167,11 +144,4 @@ def _websocket_credentials_exception() -> WebSocketException:
     return WebSocketException(
         code=status.WS_1008_POLICY_VIOLATION,
         reason="Could not validate credentials.",
-    )
-
-
-def _websocket_permission_exception() -> WebSocketException:
-    return WebSocketException(
-        code=status.WS_1008_POLICY_VIOLATION,
-        reason="You do not have permission to view Events.",
     )

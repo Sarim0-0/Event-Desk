@@ -4,19 +4,16 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from app.api.dependencies import (
+    CurrentUser,
     DatabaseSession,
     PermissionGrant,
     require_any_permission,
-    require_permission,
 )
 from app.core.permissions import (
     CANCEL_ANY_BOOKING,
     CANCEL_OWN_BOOKING,
-    CREATE_BOOKINGS,
-    VIEW_OWN_BOOKINGS,
 )
 from app.models.enums import NotificationType
-from app.models.user import User
 from app.schemas.booking import (
     BookingCreate,
     BookingListQuery,
@@ -45,10 +42,7 @@ router = APIRouter(prefix="/bookings", tags=["Bookings"])
 )
 async def list_own_bookings_endpoint(
     query: Annotated[BookingListQuery, Query()],
-    current_user: Annotated[
-        User,
-        Depends(require_permission(VIEW_OWN_BOOKINGS)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> PaginatedBookingsResponse:
     return await list_own_bookings(session, current_user, query)
@@ -63,10 +57,7 @@ async def list_own_bookings_endpoint(
 async def create_booking_endpoint(
     request: BookingCreate,
     background_tasks: BackgroundTasks,
-    current_user: Annotated[
-        User,
-        Depends(require_permission(CREATE_BOOKINGS)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> BookingResponse:
     booking = await create_booking(session, current_user, request)
