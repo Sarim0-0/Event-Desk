@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models.enums import EventStatus
+from app.models.enums import AuditAction, AuditEntityType, EventStatus
 from app.models.event import Tag
 from app.models.user import User
 from app.repositories import event as event_repository
@@ -18,6 +18,7 @@ from app.schemas.event import (
     EventUpdate,
     PaginatedEventsResponse,
 )
+from app.services import audit as audit_service
 
 
 async def list_events(
@@ -124,6 +125,14 @@ async def create_event(
             tickets_available=request.total_tickets,
             status=request.status,
             tags=tags,
+        )
+
+        audit_service.record_action(
+            session,
+            actor_id=current_user.id,
+            action=AuditAction.EVENT_CREATED,
+            entity_type=AuditEntityType.EVENT,
+            entity_id=event.id,
         )
 
         response = EventResponse(
@@ -286,6 +295,14 @@ async def cancel_event(
         )
         await event_repository.flush_event(session)
         await event_repository.refresh_event(session, event)
+
+        audit_service.record_action(
+            session,
+            actor_id=current_user.id,
+            action=AuditAction.EVENT_CANCELLED,
+            entity_type=AuditEntityType.EVENT,
+            entity_id=event.id,
+        )
 
         response = EventResponse(
             id=event.id,

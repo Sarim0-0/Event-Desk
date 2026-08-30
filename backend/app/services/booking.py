@@ -5,10 +5,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models.enums import BookingStatus, EventStatus
+from app.models.enums import (
+    AuditAction,
+    AuditEntityType,
+    BookingStatus,
+    EventStatus,
+)
 from app.models.user import User
 from app.repositories import booking as booking_repository
 from app.schemas.booking import BookingCreate, BookingResponse
+from app.services import audit as audit_service
 
 
 async def create_booking(
@@ -59,6 +65,14 @@ async def create_booking(
         )
         await booking_repository.flush_booking(session, booking)
         await booking_repository.refresh_booking(session, booking)
+
+        audit_service.record_action(
+            session,
+            actor_id=current_user.id,
+            action=AuditAction.BOOKING_CREATED,
+            entity_type=AuditEntityType.BOOKING,
+            entity_id=booking.id,
+        )
 
         response = BookingResponse.model_validate(booking)
 
@@ -134,6 +148,14 @@ async def cancel_booking(
 
         await booking_repository.flush_booking(session, booking)
         await booking_repository.refresh_booking(session, booking)
+
+        audit_service.record_action(
+            session,
+            actor_id=current_user.id,
+            action=AuditAction.BOOKING_CANCELLED,
+            entity_type=AuditEntityType.BOOKING,
+            entity_id=booking.id,
+        )
 
         response = BookingResponse.model_validate(booking)
 
