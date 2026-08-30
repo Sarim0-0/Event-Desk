@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
+    scheduler_enabled: bool = True
     cors_allowed_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173"
     )

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.database.session import dispose_database_engine
+from app.scheduler import shutdown_scheduler, start_scheduler
 
 # Import every model module before the application handles database queries.
 # This replaces a separate model-registry file for runtime mapper configuration.
@@ -23,8 +24,18 @@ from app.api.router import api_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    yield
-    await dispose_database_engine()
+    scheduler_enabled = settings.scheduler_enabled
+    if scheduler_enabled:
+        start_scheduler()
+
+    try:
+        yield
+    finally:
+        try:
+            if scheduler_enabled:
+                shutdown_scheduler()
+        finally:
+            await dispose_database_engine()
 
 
 app = FastAPI(title="EventDesk API", lifespan=lifespan)

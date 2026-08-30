@@ -218,6 +218,8 @@ async def update_event(
             tags=tags,
             tickets_available=tickets_available,
         )
+        if "event_datetime" in changes:
+            event_repository.reset_event_reminder(event)
         await event_repository.flush_event(session)
         await event_repository.refresh_event(session, event)
 

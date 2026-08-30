@@ -28,6 +28,7 @@ class NotificationType(str, Enum):
     BOOKING_CONFIRMED = "booking_confirmed"
     BOOKING_CANCELLED = "booking_cancelled"
     EVENT_CANCELLED = "event_cancelled"
+    EVENT_REMINDER = "event_reminder"
     EVENT_REVIEWED = "event_reviewed"
     REVIEW_REPLIED = "review_replied"
 
