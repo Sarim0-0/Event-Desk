@@ -7,6 +7,7 @@ from app.api.dependencies import DatabaseSession, require_permission
 from app.core.permissions import (
     CHANGE_OWN_PASSWORD,
     CHANGE_USER_ROLE,
+    CHANGE_USER_STATUS,
     UPDATE_OWN_PROFILE,
 )
 from app.models.user import User
@@ -19,6 +20,7 @@ from app.schemas.user import (
 from app.services.user import (
     change_own_password,
     change_user_role,
+    deactivate_user,
     update_own_profile,
 )
 
@@ -81,3 +83,20 @@ async def change_user_role_endpoint(
         user_id,
         request,
     )
+
+
+@router.post(
+    "/{user_id}/deactivate",
+    response_model=UserResponse,
+    status_code=status.HTTP_200_OK,
+    name="deactivate_user",
+)
+async def deactivate_user_endpoint(
+    user_id: UUID,
+    current_user: Annotated[
+        User,
+        Depends(require_permission(CHANGE_USER_STATUS)),
+    ],
+    session: DatabaseSession,
+) -> UserResponse:
+    return await deactivate_user(session, current_user, user_id)
