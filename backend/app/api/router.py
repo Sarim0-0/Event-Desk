@@ -8,11 +8,13 @@ from app.api.routes.event_availability import router as event_availability_route
 from app.api.routes.notification import router as notification_router
 from app.api.routes.reply import router as reply_router
 from app.api.routes.review import router as review_router
+from app.api.routes.user import router as user_router
 
 
 api_router = APIRouter()
 api_router.include_router(audit_router)
 api_router.include_router(auth_router)
+api_router.include_router(user_router)
 api_router.include_router(booking_router)
 api_router.include_router(event_router)
 api_router.include_router(event_availability_router)
