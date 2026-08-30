@@ -81,6 +81,53 @@ async def change_user_role(
         raise
 
 
+async def deactivate_user(
+    session: AsyncSession,
+    current_user: User,
+    user_id: UUID,
+) -> UserResponse:
+    """Soft-delete a non-Admin User after route authorization."""
+
+    try:
+        target_user = await user_repository.get_user_by_id(session, user_id)
+        if target_user is None:
+            raise NotFoundError("The selected User does not exist.")
+
+        if target_user.role.name == UserRole.ADMIN.value:
+            raise ForbiddenError("Admin accounts cannot be deactivated.")
+
+        already_deactivated = (
+            not target_user.is_active
+            and target_user.deleted_at is not None
+        )
+        deactivated_at = datetime.now(timezone.utc)
+        if not already_deactivated:
+            user_repository.deactivate_user(target_user, deactivated_at)
+            await user_repository.flush_user(session, target_user)
+            await user_repository.refresh_user(session, target_user)
+
+        await user_repository.revoke_active_refresh_tokens(
+            session,
+            user_id=target_user.id,
+            revoked_at=deactivated_at,
+        )
+
+        response = UserResponse(
+            id=target_user.id,
+            name=target_user.name,
+            email=target_user.email,
+            role=target_user.role.name,
+            is_active=target_user.is_active,
+            created_at=target_user.created_at,
+        )
+
+        await session.commit()
+        return response
+    except Exception:
+        await session.rollback()
+        raise
+
+
 async def update_own_profile(
     session: AsyncSession,
     current_user: User,
