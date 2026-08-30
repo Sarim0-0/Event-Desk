@@ -30,3 +30,12 @@ the public frontend origin to the backend's comma-separated
 - An expired access token is restored with `POST /auth/refresh` when the app
   opens.
 - Logout calls `POST /auth/logout` and always clears the local session.
+
+## Event listing
+
+- Authenticated users are sent to the event listing after login.
+- Each page is loaded from `GET /events?page=N` using the bearer access token.
+- The backend-defined page size of six events is displayed as a three-column
+  grid on desktop, with responsive two- and one-column layouts.
+- A rejected expired access token is refreshed once before the event request is
+  retried. Invalid refresh tokens return the user to login.
