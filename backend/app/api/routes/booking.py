@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from app.api.dependencies import (
     DatabaseSession,
@@ -13,11 +13,21 @@ from app.core.permissions import (
     CANCEL_ANY_BOOKING,
     CANCEL_OWN_BOOKING,
     CREATE_BOOKINGS,
+    VIEW_OWN_BOOKINGS,
 )
 from app.models.enums import NotificationType
 from app.models.user import User
-from app.schemas.booking import BookingCreate, BookingResponse
-from app.services.booking import cancel_booking, create_booking
+from app.schemas.booking import (
+    BookingCreate,
+    BookingListQuery,
+    BookingResponse,
+    PaginatedBookingsResponse,
+)
+from app.services.booking import (
+    cancel_booking,
+    create_booking,
+    list_own_bookings,
+)
 from app.tasks.event_availability import (
     broadcast_event_availability_in_background,
 )
@@ -25,6 +35,23 @@ from app.tasks.notification import create_notification_in_background
 
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
+
+
+@router.get(
+    "",
+    response_model=PaginatedBookingsResponse,
+    status_code=status.HTTP_200_OK,
+    name="list_own_bookings",
+)
+async def list_own_bookings_endpoint(
+    query: Annotated[BookingListQuery, Query()],
+    current_user: Annotated[
+        User,
+        Depends(require_permission(VIEW_OWN_BOOKINGS)),
+    ],
+    session: DatabaseSession,
+) -> PaginatedBookingsResponse:
+    return await list_own_bookings(session, current_user, query)
 
 
 @router.post(
