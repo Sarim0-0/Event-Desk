@@ -14,6 +14,7 @@ from app.models.enums import (
 from app.models.user import User
 from app.models.booking import Booking
 from app.models.event import Event
+from app.models.review import Review
 from app.repositories import booking as booking_repository
 from app.schemas.booking import (
     BOOKINGS_PER_PAGE,
@@ -45,7 +46,11 @@ async def list_own_bookings(
 
     return PaginatedBookingsResponse(
         items=[
-            _booking_response(booking, booking.event)
+            _booking_response(
+                booking,
+                booking.event,
+                review=booking.review,
+            )
             for booking in bookings
         ],
         page=query.page,
@@ -194,7 +199,11 @@ async def cancel_booking(
             entity_id=booking.id,
         )
 
-        response = _booking_response(booking, event)
+        response = _booking_response(
+            booking,
+            event,
+            review=booking.review,
+        )
 
         await session.commit()
         return response
@@ -215,13 +224,19 @@ def _get_constraint_name(error: IntegrityError) -> str | None:
     )
 
 
-def _booking_response(booking: Booking, event: Event) -> BookingResponse:
+def _booking_response(
+    booking: Booking,
+    event: Event,
+    *,
+    review: Review | None = None,
+) -> BookingResponse:
     return BookingResponse(
         id=booking.id,
         user_id=booking.user_id,
         event_id=booking.event_id,
         event_title=event.title,
         event_status=event.status,
+        review=review,
         quantity=booking.quantity,
         status=booking.status,
         booked_at=booking.booked_at,

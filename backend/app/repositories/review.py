@@ -2,9 +2,10 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.booking import Booking
+from app.models.event import Event
 from app.models.review import Review
 
 
@@ -38,6 +39,38 @@ async def get_review_by_id(
         .where(Review.id == review_id)
     )
     return await session.scalar(statement)
+
+
+async def list_manageable_reviews(
+    session: AsyncSession,
+    *,
+    organizer_id: UUID | None,
+) -> list[Review]:
+    """Load Reviews with the context required by the management view."""
+
+    statement = (
+        select(Review)
+        .join(Review.booking)
+        .join(Booking.event)
+        .options(
+            joinedload(Review.booking)
+            .joinedload(Booking.event)
+            .joinedload(Event.organizer),
+            joinedload(Review.booking).joinedload(Booking.user),
+            selectinload(Review.replies),
+        )
+        .order_by(
+            Event.event_datetime.desc(),
+            Event.title.asc(),
+            Review.created_at.desc(),
+            Review.id.desc(),
+        )
+    )
+    if organizer_id is not None:
+        statement = statement.where(Event.organizer_id == organizer_id)
+
+    reviews = await session.scalars(statement)
+    return list(reviews.unique().all())
 
 
 def add_review(

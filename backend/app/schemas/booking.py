@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import BookingStatus, EventStatus
+from app.schemas.review import ReviewWithRepliesResponse
 
 
 BOOKINGS_PER_PAGE = 5
@@ -29,6 +30,7 @@ class BookingResponse(BaseModel):
     event_id: UUID
     event_title: str
     event_status: EventStatus
+    review: ReviewWithRepliesResponse | None
     quantity: int
     status: BookingStatus
     booked_at: datetime

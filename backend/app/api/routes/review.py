@@ -14,14 +14,54 @@ from app.core.permissions import (
     DELETE_OWN_REVIEW,
     EDIT_ANY_REVIEW,
     EDIT_OWN_REVIEW,
+    REPLY_TO_ANY_REVIEW,
+    REPLY_TO_OWN_EVENT_REVIEWS,
 )
 from app.models.enums import NotificationType
-from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
-from app.services.review import create_review, delete_review, update_review
+from app.schemas.review import (
+    EventReviewsResponse,
+    ReviewCreate,
+    ReviewResponse,
+    ReviewUpdate,
+)
+from app.services.review import (
+    create_review,
+    delete_review,
+    list_event_reviews,
+    update_review,
+)
 from app.tasks.notification import create_notification_in_background
 
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
+
+
+@router.get(
+    "",
+    response_model=list[EventReviewsResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_event_reviews",
+)
+async def list_event_reviews_endpoint(
+    permission_grant: Annotated[
+        PermissionGrant,
+        Depends(
+            require_any_permission(
+                REPLY_TO_OWN_EVENT_REVIEWS,
+                REPLY_TO_ANY_REVIEW,
+            )
+        ),
+    ],
+    session: DatabaseSession,
+) -> list[EventReviewsResponse]:
+    return await list_event_reviews(
+        session,
+        permission_grant.user,
+        can_view_own_events=permission_grant.allows(
+            REPLY_TO_OWN_EVENT_REVIEWS
+        ),
+        can_view_any_event=permission_grant.allows(REPLY_TO_ANY_REVIEW),
+    )
 
 
 @router.post(

@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.models.booking import Booking
 from app.models.enums import BookingStatus
 from app.models.event import Event
+from app.models.review import Review
 
 
 _BOOKINGS_PER_PAGE = 5
@@ -31,7 +32,10 @@ async def list_bookings_by_user(
 ) -> list[Booking]:
     statement = (
         select(Booking)
-        .options(selectinload(Booking.event))
+        .options(
+            selectinload(Booking.event),
+            selectinload(Booking.review).selectinload(Review.replies),
+        )
         .where(Booking.user_id == user_id)
         .order_by(Booking.booked_at.desc(), Booking.id.desc())
         .offset((page - 1) * _BOOKINGS_PER_PAGE)
@@ -97,6 +101,9 @@ async def get_booking_for_update(
 ) -> Booking | None:
     statement = (
         select(Booking)
+        .options(
+            selectinload(Booking.review).selectinload(Review.replies)
+        )
         .where(Booking.id == booking_id)
         .with_for_update()
     )

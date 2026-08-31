@@ -7,7 +7,72 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.enums import BookingStatus
 from app.models.user import User
 from app.repositories import review as review_repository
-from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
+from app.schemas.reply import ReplyResponse
+from app.schemas.review import (
+    EventReviewsResponse,
+    ManagedReviewResponse,
+    ReviewCreate,
+    ReviewResponse,
+    ReviewUpdate,
+)
+
+
+async def list_event_reviews(
+    session: AsyncSession,
+    current_user: User,
+    *,
+    can_view_own_events: bool,
+    can_view_any_event: bool,
+) -> list[EventReviewsResponse]:
+    """Group visible Reviews under the Event to which they belong."""
+
+    if not can_view_own_events and not can_view_any_event:
+        raise ForbiddenError(
+            "You do not have permission to view Event Reviews."
+        )
+
+    reviews = await review_repository.list_manageable_reviews(
+        session,
+        organizer_id=None if can_view_any_event else current_user.id,
+    )
+    groups: dict[UUID, EventReviewsResponse] = {}
+
+    for review in reviews:
+        booking = review.booking
+        event = booking.event
+        group = groups.get(event.id)
+        if group is None:
+            group = EventReviewsResponse(
+                event_id=event.id,
+                event_title=event.title,
+                event_status=event.status,
+                organizer_id=event.organizer_id,
+                organizer_name=event.organizer.name,
+                reviews=[],
+            )
+            groups[event.id] = group
+
+        group.reviews.append(
+            ManagedReviewResponse(
+                id=review.id,
+                booking_id=review.booking_id,
+                rating=review.rating,
+                comment=review.comment,
+                created_at=review.created_at,
+                updated_at=review.updated_at,
+                reviewer_id=booking.user_id,
+                reviewer_name=booking.user.name,
+                replies=[
+                    ReplyResponse.model_validate(reply)
+                    for reply in sorted(
+                        review.replies,
+                        key=lambda item: (item.created_at, str(item.id)),
+                    )
+                ],
+            )
+        )
+
+    return list(groups.values())
 
 
 async def create_review(

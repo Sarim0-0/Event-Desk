@@ -18,6 +18,13 @@ import {
 } from './api/events.js'
 import { cancelBooking, createBooking, listBookings } from './api/bookings.js'
 import {
+  createReview,
+  createReviewReply,
+  deleteReview,
+  listEventReviews,
+  updateReview,
+} from './api/reviews.js'
+import {
   getNotificationSocketUrl,
   listNotifications,
   markAllNotificationsRead,
@@ -832,6 +839,9 @@ function AppIcon({ type }) {
     star: (
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
     ),
+    reviews: (
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    ),
     reply: (
       <><polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 00-4-4H4" /></>
     ),
@@ -868,6 +878,9 @@ function ApplicationShell({
   const navigation = [
     { key: 'events', label: 'Events' },
     { key: 'bookings', label: 'Bookings' },
+    ...(['organizer', 'admin'].includes(role)
+      ? [{ key: 'reviews', label: 'Reviews' }]
+      : []),
     ...(role === 'admin'
       ? [
           { key: 'users', label: 'Users' },
@@ -2552,6 +2565,255 @@ function shortId(value) {
   return typeof value === 'string' ? value.slice(0, 8) : 'Unknown'
 }
 
+function RatingStars({ rating, onChange }) {
+  const interactive = typeof onChange === 'function'
+
+  return (
+    <div
+      className={`review-stars ${interactive ? 'review-stars-interactive' : ''}`}
+      aria-label={interactive ? 'Choose a rating out of 5 stars' : `${rating} out of 5 stars`}
+      role={interactive ? 'group' : 'img'}
+    >
+      {[1, 2, 3, 4, 5].map((value) =>
+        interactive ? (
+          <button
+            className={value <= rating ? 'review-star-active' : ''}
+            type="button"
+            onClick={() => onChange(value)}
+            aria-label={`${value} star${value === 1 ? '' : 's'}`}
+            aria-pressed={rating === value}
+            key={value}
+          >
+            ★
+          </button>
+        ) : (
+          <span className={value <= rating ? 'review-star-active' : ''} key={value}>
+            ★
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
+function ReviewModal({
+  booking,
+  tokens,
+  onClose,
+  onSaved,
+  onDeleted,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const existingReview = booking.review
+  const [rating, setRating] = useState(existingReview?.rating || 0)
+  const [comment, setComment] = useState(existingReview?.comment || '')
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const busy = submitting || deleting
+  const closeWhenIdle = () => {
+    if (!busy) onClose()
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const normalizedComment = comment.trim()
+    const errors = {}
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      errors.rating = 'Choose a rating from 1 to 5 stars.'
+    }
+    if (!normalizedComment) {
+      errors.comment = 'Write a review before submitting.'
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = existingReview
+        ? await updateReview({
+            tokens,
+            reviewId: existingReview.id,
+            rating,
+            comment: normalizedComment,
+          })
+        : await createReview({
+            tokens,
+            bookingId: booking.id,
+            rating,
+            comment: normalizedComment,
+          })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onSaved(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['rating', 'comment'],
+        `We could not ${existingReview ? 'update' : 'publish'} your review. Please try again.`,
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!existingReview || deleting) return
+
+    setDeleting(true)
+    setFormError(null)
+    try {
+      const result = await deleteReview({
+        tokens,
+        reviewId: existingReview.id,
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onDeleted()
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      setConfirmDelete(false)
+      setFormError(
+        error instanceof ApiError && typeof error.payload?.detail === 'string'
+          ? error.payload.detail
+          : 'We could not delete your review. Please try again.',
+      )
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Modal
+      titleId="review-modal-title"
+      onClose={closeWhenIdle}
+      className="form-modal review-modal"
+    >
+      <div className="modal-heading">
+        <p className="eyebrow">{existingReview ? 'Your feedback' : 'Share your experience'}</p>
+        <h1 id="review-modal-title">
+          {existingReview ? 'Edit review' : 'Leave a review'}
+        </h1>
+        <p>{booking.event_title}</p>
+      </div>
+      <Alert>{formError}</Alert>
+      {existingReview?.replies?.length > 0 && (
+        <div className="review-modal-replies">
+          <span>Replies to your review</span>
+          {existingReview.replies.map((reply) => (
+            <div className={`review-reply review-reply-${reply.replier_role}`} key={reply.id}>
+              <div>
+                <strong>{reply.replier_role === 'admin' ? 'Admin reply' : 'Organizer reply'}</strong>
+                <time dateTime={reply.created_at}>{formatDateTime(reply.created_at)}</time>
+              </div>
+              <p>{reply.body}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <form className="review-form" onSubmit={handleSubmit} noValidate>
+        <fieldset className="review-rating-field">
+          <legend>Rating</legend>
+          <RatingStars
+            rating={rating}
+            onChange={(value) => {
+              setRating(value)
+              setFieldErrors((current) => ({ ...current, rating: undefined }))
+              setFormError(null)
+            }}
+          />
+          <FieldError id="review-rating-error">{fieldErrors.rating}</FieldError>
+        </fieldset>
+        <div className="form-field">
+          <label htmlFor="review-comment">Review</label>
+          <textarea
+            id="review-comment"
+            name="comment"
+            value={comment}
+            onChange={(event) => {
+              setComment(event.target.value)
+              setFieldErrors((current) => ({ ...current, comment: undefined }))
+              setFormError(null)
+            }}
+            className={fieldErrors.comment ? 'input-error' : ''}
+            placeholder="What did you think of the event?"
+            rows={5}
+          />
+          <FieldError id="review-comment-error">{fieldErrors.comment}</FieldError>
+        </div>
+
+        {confirmDelete && (
+          <div className="review-delete-confirmation" role="alert">
+            <div>
+              <strong>Delete this review?</strong>
+              <p>Your rating, comment, and all replies will be permanently removed.</p>
+            </div>
+            <div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+              >
+                Keep review
+              </button>
+              <button
+                className="destructive-button"
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="modal-actions review-form-actions">
+          {existingReview && !confirmDelete && (
+            <button
+              className="destructive-button"
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              disabled={busy}
+            >
+              Delete review
+            </button>
+          )}
+          <button className="secondary-button" type="button" onClick={closeWhenIdle} disabled={busy}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit" disabled={busy || confirmDelete}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Saving…' : existingReview ? 'Save changes' : 'Publish review'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function validateBookingPage(payload) {
   return (
     payload &&
@@ -2561,7 +2823,21 @@ function validateBookingPage(payload) {
         typeof booking?.event_title === 'string' &&
         ['draft', 'published', 'cancelled', 'completed'].includes(
           booking.event_status,
-        ),
+        ) &&
+        (booking.review === null ||
+          (typeof booking.review?.id === 'string' &&
+            booking.review.booking_id === booking.id &&
+            Number.isInteger(booking.review.rating) &&
+            booking.review.rating >= 1 &&
+            booking.review.rating <= 5 &&
+            typeof booking.review.comment === 'string' &&
+            Array.isArray(booking.review.replies) &&
+            booking.review.replies.every(
+              (reply) =>
+                typeof reply?.id === 'string' &&
+                ['organizer', 'admin'].includes(reply.replier_role) &&
+                typeof reply.body === 'string',
+            ))),
     ) &&
     payload.page_size === 5 &&
     Number.isInteger(payload.page) &&
@@ -2578,6 +2854,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
   const [retryCount, setRetryCount] = useState(0)
   const [cancellingBookingId, setCancellingBookingId] = useState(null)
   const [bookingToCancel, setBookingToCancel] = useState(null)
+  const [reviewBooking, setReviewBooking] = useState(null)
   const [actionError, setActionError] = useState(null)
   const tokensRef = useRef(tokens)
 
@@ -2675,6 +2952,34 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
     }
   }
 
+  function updateBookingReview(bookingId, review) {
+    setBookingPage((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((booking) =>
+              booking.id === bookingId ? { ...booking, review } : booking,
+            ),
+          }
+        : current,
+    )
+  }
+
+  function handleReviewSaved(review) {
+    if (!reviewBooking) return
+    updateBookingReview(reviewBooking.id, {
+      ...review,
+      replies: reviewBooking.review?.replies || [],
+    })
+    setReviewBooking(null)
+  }
+
+  function handleReviewDeleted() {
+    if (!reviewBooking) return
+    updateBookingReview(reviewBooking.id, null)
+    setReviewBooking(null)
+  }
+
   return (
     <section className="events-content" aria-labelledby="bookings-title">
       <div className="events-intro">
@@ -2745,6 +3050,29 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                   <strong>{booking.quantity}</strong>
                 </div>
                 <div className="booking-actions">
+                  {booking.review ? (
+                    <button
+                      className="secondary-button review-booking-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setReviewBooking(booking)
+                      }}
+                    >
+                      Edit review
+                    </button>
+                  ) : booking.status === 'confirmed' && booking.event_status !== 'cancelled' ? (
+                    <button
+                      className="secondary-button review-booking-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setReviewBooking(booking)
+                      }}
+                    >
+                      Leave a review
+                    </button>
+                  ) : null}
                   {booking.status === 'cancelled' ? (
                     <span className="read-status-label">Cancelled</span>
                   ) : (
@@ -2785,6 +3113,17 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
           onClose={() => setBookingToCancel(null)}
           onConfirm={handleCancelBooking}
           submitting={cancellingBookingId === bookingToCancel.id}
+        />
+      )}
+      {reviewBooking && (
+        <ReviewModal
+          booking={reviewBooking}
+          tokens={tokens}
+          onClose={() => setReviewBooking(null)}
+          onSaved={handleReviewSaved}
+          onDeleted={handleReviewDeleted}
+          onSessionExpired={onSessionExpired}
+          onTokensChanged={onTokensChanged}
         />
       )}
     </section>
@@ -2849,6 +3188,334 @@ function useProtectedList({
     error,
     retry: () => setRetryCount((count) => count + 1),
   }
+}
+
+function validateReviewGroups(payload) {
+  return (
+    Array.isArray(payload) &&
+    payload.every(
+      (group) =>
+        typeof group?.event_id === 'string' &&
+        typeof group.event_title === 'string' &&
+        ['draft', 'published', 'cancelled', 'completed'].includes(group.event_status) &&
+        typeof group.organizer_id === 'string' &&
+        typeof group.organizer_name === 'string' &&
+        Array.isArray(group.reviews) &&
+        group.reviews.every(
+          (review) =>
+            typeof review?.id === 'string' &&
+            typeof review.booking_id === 'string' &&
+            typeof review.reviewer_id === 'string' &&
+            typeof review.reviewer_name === 'string' &&
+            Number.isInteger(review.rating) &&
+            review.rating >= 1 &&
+            review.rating <= 5 &&
+            typeof review.comment === 'string' &&
+            Array.isArray(review.replies) &&
+            review.replies.every(
+              (reply) =>
+                typeof reply?.id === 'string' &&
+                reply.review_id === review.id &&
+                ['organizer', 'admin'].includes(reply.replier_role) &&
+                typeof reply.body === 'string',
+            ),
+        ),
+    )
+  )
+}
+
+function ReplyModal({
+  review,
+  eventTitle,
+  tokens,
+  onClose,
+  onReplied,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [body, setBody] = useState('')
+  const [fieldError, setFieldError] = useState(null)
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const closeWhenIdle = () => {
+    if (!submitting) onClose()
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const normalizedBody = body.trim()
+    if (!normalizedBody) {
+      setFieldError('Write a reply before submitting.')
+      setFormError('Please correct the highlighted field and try again.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldError(null)
+    setFormError(null)
+    try {
+      const result = await createReviewReply({
+        tokens,
+        reviewId: review.id,
+        body: normalizedBody,
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onReplied(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['body'],
+        'We could not publish this reply. Please try again.',
+      )
+      setFieldError(apiErrors.fieldErrors.body)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal
+      titleId="reply-modal-title"
+      onClose={closeWhenIdle}
+      className="form-modal reply-modal"
+    >
+      <div className="modal-heading">
+        <p className="eyebrow">Respond to feedback</p>
+        <h1 id="reply-modal-title">Reply to review</h1>
+        <p>{eventTitle} · Review by {review.reviewer_name}</p>
+      </div>
+      <div className="reply-review-preview">
+        <RatingStars rating={review.rating} />
+        <p>{review.comment}</p>
+      </div>
+      <Alert>{formError}</Alert>
+      <form className="review-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field">
+          <label htmlFor="reply-body">Your reply</label>
+          <textarea
+            id="reply-body"
+            name="body"
+            value={body}
+            onChange={(event) => {
+              setBody(event.target.value)
+              setFieldError(null)
+              setFormError(null)
+            }}
+            className={fieldError ? 'input-error' : ''}
+            placeholder="Thank the attendee or address their feedback"
+            rows={5}
+          />
+          <FieldError id="reply-body-error">{fieldError}</FieldError>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={closeWhenIdle} disabled={submitting}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Publishing…' : 'Publish reply'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function ReviewsPage({
+  tokens,
+  role,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const {
+    data: reviewGroups,
+    setData: setReviewGroups,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({
+    tokens,
+    onSessionExpired,
+    onTokensChanged,
+    load: listEventReviews,
+    resource: 'event reviews',
+  })
+  const [replyTarget, setReplyTarget] = useState(null)
+
+  const validGroups = reviewGroups && validateReviewGroups(reviewGroups)
+    ? reviewGroups
+    : null
+  const totalReviews = validGroups?.reduce(
+    (total, group) => total + group.reviews.length,
+    0,
+  ) || 0
+
+  function handleReplied(reply) {
+    if (!replyTarget) return
+    setReviewGroups((current) =>
+      current?.map((group) =>
+        group.event_id !== replyTarget.event.event_id
+          ? group
+          : {
+              ...group,
+              reviews: group.reviews.map((review) =>
+                review.id === replyTarget.review.id
+                  ? { ...review, replies: [...review.replies, reply] }
+                  : review,
+              ),
+            },
+      ),
+    )
+    setReplyTarget(null)
+  }
+
+  if (!loading && reviewGroups && !validGroups) {
+    return (
+      <section className="events-content" aria-labelledby="reviews-title">
+        <ResourceError
+          title="Reviews could not be loaded"
+          message="The server returned an invalid review response."
+          onRetry={retry}
+        />
+      </section>
+    )
+  }
+
+  return (
+    <section className="events-content reviews-content" aria-labelledby="reviews-title">
+      <div className="events-intro reviews-intro">
+        <div>
+          <p className="eyebrow">Event feedback</p>
+          <h1 id="reviews-title">Reviews</h1>
+          <p>
+            {role === 'admin'
+              ? 'See attendee feedback across every event and respond as an admin.'
+              : 'See attendee feedback grouped under each of your events.'}
+          </p>
+        </div>
+        {!loading && validGroups && (
+          <div className="reviews-summary">
+            <span>{validGroups.length} event{validGroups.length === 1 ? '' : 's'}</span>
+            <strong>{totalReviews} review{totalReviews === 1 ? '' : 's'}</strong>
+            <button type="button" onClick={retry}>Refresh</button>
+          </div>
+        )}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Reviews could not be loaded"
+          message={error}
+          onRetry={retry}
+        />
+      ) : loading ? (
+        <div className="review-groups" aria-label="Loading reviews" aria-busy="true">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div className="review-group review-group-skeleton skeleton-block" key={index} />
+          ))}
+        </div>
+      ) : validGroups.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">☆</span>
+          <h2>No reviews yet</h2>
+          <p>Reviews will appear here under the event they belong to.</p>
+        </div>
+      ) : (
+        <div className="review-groups">
+          {validGroups.map((group) => (
+            <section className="review-group" aria-labelledby={`reviews-event-${group.event_id}`} key={group.event_id}>
+              <header className="review-group-header">
+                <div>
+                  <div className="review-event-title-line">
+                    <h2 id={`reviews-event-${group.event_id}`}>{group.event_title}</h2>
+                    <span className={`review-event-status review-event-status-${group.event_status}`}>
+                      {group.event_status}
+                    </span>
+                  </div>
+                  {role === 'admin' && <p>Organized by {group.organizer_name}</p>}
+                </div>
+                <span>{group.reviews.length} review{group.reviews.length === 1 ? '' : 's'}</span>
+              </header>
+              <div className="review-list">
+                {group.reviews.map((review) => {
+                  const hasRoleReply = review.replies.some(
+                    (reply) => reply.replier_role === role,
+                  )
+                  return (
+                    <article className="review-card" key={review.id}>
+                      <div className="review-author-avatar" aria-hidden="true">
+                        {review.reviewer_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="review-card-content">
+                        <div className="review-card-heading">
+                          <div>
+                            <strong>{review.reviewer_name}</strong>
+                            <RatingStars rating={review.rating} />
+                          </div>
+                          <time dateTime={review.created_at}>{formatDateTime(review.created_at)}</time>
+                        </div>
+                        <p className="review-comment">{review.comment}</p>
+                        {review.updated_at !== review.created_at && (
+                          <small className="review-edited">Edited {formatDateTime(review.updated_at)}</small>
+                        )}
+                        {review.replies.length > 0 && (
+                          <div className="review-replies">
+                            {review.replies.map((reply) => (
+                              <div className={`review-reply review-reply-${reply.replier_role}`} key={reply.id}>
+                                <div>
+                                  <strong>{reply.replier_role === 'admin' ? 'Admin reply' : 'Organizer reply'}</strong>
+                                  <time dateTime={reply.created_at}>{formatDateTime(reply.created_at)}</time>
+                                </div>
+                                <p>{reply.body}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="review-card-actions">
+                          {hasRoleReply ? (
+                            <span className="read-status-label">You replied</span>
+                          ) : (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() => setReplyTarget({ event: group, review })}
+                            >
+                              <AppIcon type="reply" />
+                              Reply
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
+      {replyTarget && (
+        <ReplyModal
+          review={replyTarget.review}
+          eventTitle={replyTarget.event.event_title}
+          tokens={tokens}
+          onClose={() => setReplyTarget(null)}
+          onReplied={handleReplied}
+          onSessionExpired={onSessionExpired}
+          onTokensChanged={onTokensChanged}
+        />
+      )}
+    </section>
+  )
 }
 
 function ProfileModal({
@@ -3753,7 +4420,14 @@ function AuthVisual({ view }) {
   )
 }
 
-const APP_PAGES = ['events', 'bookings', 'notifications', 'users', 'logs']
+const APP_PAGES = [
+  'events',
+  'bookings',
+  'reviews',
+  'notifications',
+  'users',
+  'logs',
+]
 
 function getInitialAppPage() {
   const page = window.location.pathname.slice(1)
@@ -4058,7 +4732,11 @@ function App() {
   const role = currentUser?.role || tokenRole
   const currentUserId = typeof claims?.sub === 'string' ? claims.sub : null
   const isAdminPage = ['users', 'logs'].includes(appPage)
-  const resolvedPage = isAdminPage && role !== 'admin' ? 'events' : appPage
+  const isReviewPage = appPage === 'reviews'
+  const isRestrictedPage =
+    (isAdminPage && role !== 'admin') ||
+    (isReviewPage && !['organizer', 'admin'].includes(role))
+  const resolvedPage = isRestrictedPage ? 'events' : appPage
 
   function handleEventCreated(event) {
     setCreateEventOpen(false)
@@ -4096,6 +4774,7 @@ function App() {
         />
       ),
       bookings: <BookingsPage {...pageProps} />,
+      reviews: <ReviewsPage {...pageProps} role={role} />,
       notifications: (
         <NotificationsPage
           {...pageProps}
