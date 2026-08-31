@@ -14,6 +14,12 @@ import {
   listTags,
 } from './api/events.js'
 import { createBooking, listBookings } from './api/bookings.js'
+import {
+  getNotificationSocketUrl,
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from './api/notifications.js'
 import { listUsers } from './api/users.js'
 import { listAuditLogs } from './api/auditLogs.js'
 import { SessionExpiredError } from './api/authenticated.js'
@@ -704,7 +710,7 @@ function EventMetaIcon({ type }) {
   )
 }
 
-function EventCard({ event, index, onSelect, categoryName }) {
+function EventCard({ event, onSelect, index, categoryName }) {
   const date = formatEventDate(event.event_datetime)
   const ticketsAvailable = Number(event.tickets_available)
   const totalTickets = Number(event.total_tickets)
@@ -796,10 +802,38 @@ function AppIcon({ type }) {
     bell: (
       <><path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>
     ),
+    notifications: (
+      <><path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>
+    ),
     plus: <path d="M12 5v14M5 12h14" />,
+    check: <polyline points="20 6 9 17 4 12" />,
+    cancel: (
+      <><circle cx="12" cy="12" r="9" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></>
+    ),
+    clock: (
+      <><circle cx="12" cy="12" r="9" /><polyline points="12 6 12 12 16 14" /></>
+    ),
+    star: (
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    ),
+    reply: (
+      <><polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 00-4-4H4" /></>
+    ),
   }
 
-  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[type]}</svg>
+  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[type] || paths.bell}</svg>
+}
+
+function NotificationIcon({ type }) {
+  const iconMap = {
+    booking_confirmed: 'check',
+    booking_cancelled: 'cancel',
+    event_cancelled: 'cancel',
+    event_reminder: 'clock',
+    event_reviewed: 'star',
+    review_replied: 'reply',
+  }
+  return <AppIcon type={iconMap[type] || 'bell'} />
 }
 
 function ApplicationShell({
@@ -809,6 +843,7 @@ function ApplicationShell({
   onCreateEvent,
   onLogout,
   loggingOut,
+  unreadNotificationsCount = 0,
   children,
 }) {
   const profileInitial = role.charAt(0).toUpperCase()
@@ -853,12 +888,23 @@ function ApplicationShell({
             </button>
           )}
           <button
-            className="header-icon-button"
+            className={`header-icon-button ${currentPage === 'notifications' ? 'header-icon-button-active' : ''}`}
             type="button"
-            aria-label="Notifications. Notifications panel coming soon."
-            title="Notifications coming soon"
+            onClick={(event) => onNavigate('notifications', event)}
+            aria-label={
+              unreadNotificationsCount > 0
+                ? `Notifications (${unreadNotificationsCount} unread)`
+                : 'Notifications'
+            }
+            title="Notifications"
+            aria-current={currentPage === 'notifications' ? 'page' : undefined}
           >
             <AppIcon type="bell" />
+            {unreadNotificationsCount > 0 && (
+              <span className="notification-badge" aria-hidden="true">
+                {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+              </span>
+            )}
           </button>
           <button
             className="logout-button"
@@ -1459,44 +1505,135 @@ function EventDetailsModal({
   )
 }
 
-function useEventAvailability(tokens, onAvailabilityUpdate) {
+function useAuthenticatedWebSocket({
+  enabled = true,
+  tokens,
+  getSocketUrl,
+  onMessage,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const tokensRef = useRef(tokens)
+  const getSocketUrlRef = useRef(getSocketUrl)
+  const onMessageRef = useRef(onMessage)
+  const onSessionExpiredRef = useRef(onSessionExpired)
+  const onTokensChangedRef = useRef(onTokensChanged)
+  const handshakeRefreshAttemptedRef = useRef(false)
+  const accessToken = tokens?.access_token
+  const refreshToken = tokens?.refresh_token
+
   useEffect(() => {
+    tokensRef.current = tokens
+    getSocketUrlRef.current = getSocketUrl
+    onMessageRef.current = onMessage
+    onSessionExpiredRef.current = onSessionExpired
+    onTokensChangedRef.current = onTokensChanged
+  }, [tokens, getSocketUrl, onMessage, onSessionExpired, onTokensChanged])
+
+  useEffect(() => {
+    handshakeRefreshAttemptedRef.current = false
+  }, [refreshToken])
+
+  useEffect(() => {
+    if (!enabled || !accessToken) return undefined
+
     let socket = null
     let reconnectTimer = null
     let heartbeatTimer = null
     let stopped = false
+    let retryAttempt = 0
 
-    function connect() {
-      if (stopped) return
-      socket = new WebSocket(
-        getEventAvailabilitySocketUrl(tokens.access_token),
+    function scheduleReconnect() {
+      if (stopped || reconnectTimer) return
+      retryAttempt += 1
+      const delay = Math.min(
+        2000 * 1.5 ** Math.min(retryAttempt, 5),
+        15000,
       )
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null
+        connect()
+      }, delay)
+    }
+
+    async function refreshSocketToken() {
+      try {
+        const refreshed = await refreshAccessToken(
+          tokensRef.current.refresh_token,
+        )
+        const nextTokens = updateAccessToken(refreshed.access_token)
+        if (!nextTokens) throw new SessionExpiredError()
+
+        tokensRef.current = nextTokens
+        onTokensChangedRef.current?.(nextTokens)
+        return true
+      } catch (error) {
+        if (
+          error instanceof SessionExpiredError ||
+          (error instanceof ApiError && [401, 403].includes(error.status))
+        ) {
+          stopped = true
+          onSessionExpiredRef.current?.(
+            error instanceof ApiError && typeof error.payload?.detail === 'string'
+              ? error.payload.detail
+              : undefined,
+          )
+          return false
+        }
+
+        scheduleReconnect()
+        return false
+      }
+    }
+
+    async function connect() {
+      if (stopped) return
+
+      if (isAccessTokenExpired(tokensRef.current.access_token)) {
+        await refreshSocketToken()
+        return
+      }
+
+      let opened = false
+      socket = new WebSocket(
+        getSocketUrlRef.current(tokensRef.current.access_token),
+      )
+
       socket.addEventListener('open', () => {
+        opened = true
+        retryAttempt = 0
+        handshakeRefreshAttemptedRef.current = false
         heartbeatTimer = window.setInterval(() => {
           if (socket?.readyState === WebSocket.OPEN) socket.send('keepalive')
         }, 30000)
       })
+
       socket.addEventListener('message', (message) => {
         try {
-          const payload = JSON.parse(message.data)
-          const availability = payload?.data
-          if (
-            payload?.type === 'event_availability_updated' &&
-            typeof availability?.event_id === 'string' &&
-            Number.isInteger(availability.total_tickets) &&
-            Number.isInteger(availability.tickets_available)
-          ) {
-            onAvailabilityUpdate(availability)
-          }
+          onMessageRef.current?.(JSON.parse(message.data))
         } catch {
-          // Ignore messages that do not match the backend availability schema.
+          // Ignore messages that are not valid JSON.
         }
       })
-      socket.addEventListener('close', () => {
-        if (heartbeatTimer) window.clearInterval(heartbeatTimer)
-        if (!stopped) reconnectTimer = window.setTimeout(connect, 2000)
+
+      socket.addEventListener('close', async () => {
+        if (heartbeatTimer) {
+          window.clearInterval(heartbeatTimer)
+          heartbeatTimer = null
+        }
+        if (stopped) return
+
+        const needsTokenRefresh =
+          isAccessTokenExpired(tokensRef.current.access_token) ||
+          (!opened && !handshakeRefreshAttemptedRef.current)
+        if (needsTokenRefresh) {
+          handshakeRefreshAttemptedRef.current = true
+          await refreshSocketToken()
+          return
+        }
+
+        scheduleReconnect()
       })
-      socket.addEventListener('error', () => socket?.close())
     }
 
     connect()
@@ -1506,7 +1643,68 @@ function useEventAvailability(tokens, onAvailabilityUpdate) {
       if (heartbeatTimer) window.clearInterval(heartbeatTimer)
       socket?.close()
     }
-  }, [onAvailabilityUpdate, tokens.access_token])
+  }, [accessToken, enabled])
+}
+
+function useEventAvailability({
+  tokens,
+  onAvailabilityUpdate,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const handleMessage = useCallback(
+    (payload) => {
+      const availability = payload?.data
+      if (
+        payload?.type === 'event_availability_updated' &&
+        typeof availability?.event_id === 'string' &&
+        Number.isInteger(availability.total_tickets) &&
+        Number.isInteger(availability.tickets_available)
+      ) {
+        onAvailabilityUpdate(availability)
+      }
+    },
+    [onAvailabilityUpdate],
+  )
+
+  useAuthenticatedWebSocket({
+    tokens,
+    getSocketUrl: getEventAvailabilitySocketUrl,
+    onMessage: handleMessage,
+    onSessionExpired,
+    onTokensChanged,
+  })
+}
+
+function useNotifications({
+  enabled,
+  tokens,
+  onNotificationReceived,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const handleMessage = useCallback(
+    (payload) => {
+      if (
+        payload?.type === 'notification' &&
+        payload?.data &&
+        typeof payload.data.id === 'string' &&
+        typeof payload.data.message === 'string'
+      ) {
+        onNotificationReceived(payload.data)
+      }
+    },
+    [onNotificationReceived],
+  )
+
+  useAuthenticatedWebSocket({
+    enabled,
+    tokens,
+    getSocketUrl: getNotificationSocketUrl,
+    onMessage: handleMessage,
+    onSessionExpired,
+    onTokensChanged,
+  })
 }
 
 function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
@@ -1553,7 +1751,12 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
     )
   }, [])
 
-  useEventAvailability(tokens, handleAvailabilityUpdate)
+  useEventAvailability({
+    tokens,
+    onAvailabilityUpdate: handleAvailabilityUpdate,
+    onSessionExpired,
+    onTokensChanged,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -2175,6 +2378,344 @@ function LogsPage(props) {
   )
 }
 
+function formatNotificationType(type) {
+  const labels = {
+    booking_confirmed: 'Booking confirmed',
+    booking_cancelled: 'Booking cancelled',
+    event_cancelled: 'Event cancelled',
+    event_reminder: 'Event reminder',
+    event_reviewed: 'New review',
+    review_replied: 'Review reply',
+  }
+  return labels[type] || 'Notification'
+}
+
+function validateNotificationList(payload) {
+  return (
+    Array.isArray(payload) &&
+    payload.every(
+      (item) =>
+        item &&
+        typeof item.id === 'string' &&
+        typeof item.message === 'string' &&
+        typeof item.type === 'string',
+    )
+  )
+}
+
+const NOTIFICATION_CONTEXTS = [
+  { key: 'all', label: 'All' },
+  { key: 'booking', label: 'Bookings' },
+  { key: 'review', label: 'Reviews' },
+]
+
+function matchesNotificationContext(notification, context) {
+  if (context === 'booking') return Boolean(notification.related_booking_id)
+  if (context === 'review') return Boolean(notification.related_review_id)
+  return true
+}
+
+function NotificationsPage({
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+  subscribeToNotifications,
+  onNotificationRead,
+  onAllNotificationsRead,
+}) {
+  const [context, setContext] = useState('all')
+  const [notifications, setNotifications] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [actionLoading, setActionLoading] = useState(null)
+  const [actionNotice, setActionNotice] = useState('')
+  const [actionError, setActionError] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadNotifications() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listNotifications({
+          tokens: tokensRef.current,
+          context,
+        })
+        if (!validateNotificationList(result.data)) {
+          throw new Error('Invalid notifications response.')
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setNotifications(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, 'notifications'))
+        setLoading(false)
+      }
+    }
+
+    loadNotifications()
+    return () => {
+      cancelled = true
+    }
+  }, [context, onSessionExpired, onTokensChanged, retryCount])
+
+  useEffect(() => {
+    return subscribeToNotifications((incomingNotification) => {
+      if (!matchesNotificationContext(incomingNotification, context)) return
+
+      setNotifications((current) => {
+        if (!current) return current
+        const existingIndex = current.findIndex(
+          (item) => item.id === incomingNotification.id,
+        )
+        if (existingIndex === -1) return [incomingNotification, ...current]
+
+        const next = [...current]
+        next[existingIndex] = incomingNotification
+        return next
+      })
+    })
+  }, [context, subscribeToNotifications])
+
+  useEffect(() => {
+    if (!actionNotice) return undefined
+    const timer = window.setTimeout(() => setActionNotice(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [actionNotice])
+
+  async function handleMarkRead(notificationId) {
+    if (actionLoading) return
+    const currentNotification = notifications?.find(
+      (item) => item.id === notificationId,
+    )
+    if (!currentNotification || currentNotification.read_at) return
+
+    setActionLoading(notificationId)
+    setActionError(null)
+
+    try {
+      const result = await markNotificationRead({
+        tokens: tokensRef.current,
+        notificationId,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      setNotifications((current) =>
+        current
+          ? current.map((item) =>
+              item.id === notificationId ? result.data : item,
+            )
+          : current,
+      )
+      onNotificationRead(result.data)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(
+        getResourceErrorMessage(requestError, 'the notification update'),
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  async function handleMarkAllRead() {
+    if (actionLoading || !notifications || unreadCount === 0) return
+    setActionLoading('all')
+    setActionError(null)
+
+    try {
+      const result = await markAllNotificationsRead({
+        tokens: tokensRef.current,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      const readAt = new Date().toISOString()
+      setNotifications((current) =>
+        current
+          ? current.map((item) => ({
+              ...item,
+              read_at: item.read_at || readAt,
+            }))
+          : current,
+      )
+      onAllNotificationsRead()
+      setActionNotice(
+        result.data.updated_count > 0
+          ? `Marked ${result.data.updated_count} notification${result.data.updated_count === 1 ? '' : 's'} as read.`
+          : 'All notifications are read.',
+      )
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(
+        getResourceErrorMessage(requestError, 'the notification update'),
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const unreadCount = notifications
+    ? notifications.filter((item) => !item.read_at).length
+    : 0
+
+  return (
+    <section className="events-content notifications-content" aria-labelledby="notifications-title">
+      <div className="events-intro notifications-intro">
+        <div>
+          <p className="eyebrow">Updates &amp; Alerts</p>
+          <h1 id="notifications-title">Notifications</h1>
+          <p>Stay informed about your bookings, reviews, and event changes.</p>
+        </div>
+        <div className="notifications-header-actions">
+          {actionNotice && (
+            <span className="action-notice" role="status">
+              ✓ {actionNotice}
+            </span>
+          )}
+          <button
+            className="secondary-button mark-all-read-button"
+            type="button"
+            onClick={handleMarkAllRead}
+            disabled={loading || unreadCount === 0 || actionLoading === 'all'}
+          >
+            {actionLoading === 'all' ? 'Marking all...' : 'Mark all as read'}
+          </button>
+        </div>
+      </div>
+
+      <div className="notification-context-tabs" role="tablist" aria-label="Notification categories">
+        {NOTIFICATION_CONTEXTS.map((item) => (
+          <button
+            key={item.key}
+            role="tab"
+            aria-selected={context === item.key}
+            className={`context-tab ${context === item.key ? 'context-tab-active' : ''}`}
+            onClick={() => setContext(item.key)}
+            type="button"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      <Alert>{actionError}</Alert>
+
+      {error ? (
+        <ResourceError
+          title="Notifications could not be loaded"
+          message={error}
+          onRetry={() => setRetryCount((count) => count + 1)}
+        />
+      ) : loading ? (
+        <div className="notification-list" aria-label="Loading notifications" aria-busy="true">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div
+              className="notification-card notification-card-skeleton skeleton-block"
+              key={index}
+            />
+          ))}
+        </div>
+      ) : notifications.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">🔔</span>
+          <h2>No {context !== 'all' ? `${context} ` : ''}notifications</h2>
+          <p>
+            {context === 'all'
+              ? 'When events, bookings, or reviews have updates, they will appear here in real time.'
+              : `You have no ${context}-related notifications right now.`}
+          </p>
+        </div>
+      ) : (
+        <div className="notification-list">
+          {notifications.map((notification) => {
+            const isUnread = !notification.read_at
+            const isItemActionLoading = actionLoading === notification.id
+
+            return (
+              <article
+                className={`notification-card ${isUnread ? 'notification-unread' : ''}`}
+                key={notification.id}
+              >
+                <div className={`notification-icon-wrapper notification-type-${notification.type}`}>
+                  <NotificationIcon type={notification.type} />
+                </div>
+                <div className="notification-main">
+                  <div className="notification-top">
+                    <div className="notification-type-wrap">
+                      <span className={`notification-badge-pill pill-${notification.type}`}>
+                        {formatNotificationType(notification.type)}
+                      </span>
+                      {isUnread && <span className="unread-dot" title="Unread" />}
+                    </div>
+                    <time dateTime={notification.created_at} className="notification-time">
+                      {formatDateTime(notification.created_at)}
+                    </time>
+                  </div>
+                  <p className="notification-message">{notification.message}</p>
+                  <div className="notification-meta">
+                    {notification.related_booking_id && (
+                      <small title={notification.related_booking_id}>
+                        Booking #{shortId(notification.related_booking_id)}
+                      </small>
+                    )}
+                    {notification.related_review_id && (
+                      <small title={notification.related_review_id}>
+                        Review #{shortId(notification.related_review_id)}
+                      </small>
+                    )}
+                  </div>
+                </div>
+                <div className="notification-actions">
+                  {isUnread ? (
+                    <button
+                      className="mark-read-button"
+                      type="button"
+                      onClick={() => handleMarkRead(notification.id)}
+                      disabled={isItemActionLoading}
+                      title="Mark as read"
+                    >
+                      {isItemActionLoading ? 'Saving...' : 'Mark as read'}
+                    </button>
+                  ) : (
+                    <span className="read-status-label">Read</span>
+                  )}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function AuthVisual({ view }) {
   const isSignup = view === 'signup'
 
@@ -2218,7 +2759,7 @@ function AuthVisual({ view }) {
   )
 }
 
-const APP_PAGES = ['events', 'bookings', 'users', 'logs']
+const APP_PAGES = ['events', 'bookings', 'notifications', 'users', 'logs']
 
 function getInitialAppPage() {
   const page = window.location.pathname.slice(1)
@@ -2239,6 +2780,12 @@ function App() {
   const [createEventOpen, setCreateEventOpen] = useState(false)
   const [eventReloadVersion, setEventReloadVersion] = useState(0)
   const [appNotice, setAppNotice] = useState('')
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0)
+  const [liveToast, setLiveToast] = useState(null)
+  const unreadNotificationIdsRef = useRef(new Set())
+  const seenNotificationIdsRef = useRef(new Set())
+  const notificationBootstrapRef = useRef(true)
+  const notificationListenersRef = useRef(new Set())
   const [session, setSession] = useState(() => {
     const tokens = getStoredTokens()
 
@@ -2308,6 +2855,11 @@ function App() {
   }
 
   function handleAuthenticated(tokens) {
+    unreadNotificationIdsRef.current.clear()
+    seenNotificationIdsRef.current.clear()
+    notificationBootstrapRef.current = true
+    setUnreadNotificationsCount(0)
+    setLiveToast(null)
     setSession({ status: 'authenticated', tokens })
     setAppPage('events')
     setNotice('')
@@ -2326,6 +2878,35 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
+  const syncUnreadNotifications = useCallback((notifications) => {
+    const unreadIds = new Set(
+      notifications.filter((notification) => !notification.read_at).map(
+        (notification) => notification.id,
+      ),
+    )
+    seenNotificationIdsRef.current = new Set(
+      notifications.map((notification) => notification.id),
+    )
+    unreadNotificationIdsRef.current = unreadIds
+    setUnreadNotificationsCount(unreadIds.size)
+  }, [])
+
+  const handleNotificationRead = useCallback((notification) => {
+    if (!notification.read_at) return
+    unreadNotificationIdsRef.current.delete(notification.id)
+    setUnreadNotificationsCount(unreadNotificationIdsRef.current.size)
+  }, [])
+
+  const handleAllNotificationsRead = useCallback(() => {
+    unreadNotificationIdsRef.current.clear()
+    setUnreadNotificationsCount(0)
+  }, [])
+
+  const subscribeToNotifications = useCallback((listener) => {
+    notificationListenersRef.current.add(listener)
+    return () => notificationListenersRef.current.delete(listener)
+  }, [])
+
   useEffect(() => {
     if (!appNotice) return undefined
     const timer = window.setTimeout(() => setAppNotice(''), 4500)
@@ -2334,6 +2915,11 @@ function App() {
 
   const handleSessionExpired = useCallback((message) => {
     clearTokens()
+    unreadNotificationIdsRef.current.clear()
+    seenNotificationIdsRef.current.clear()
+    notificationBootstrapRef.current = true
+    setUnreadNotificationsCount(0)
+    setLiveToast(null)
     setSession({ status: 'anonymous', tokens: null })
     setLoggingOut(false)
     setCreateEventOpen(false)
@@ -2353,6 +2939,11 @@ function App() {
       // invalid or the API is temporarily unreachable.
     } finally {
       clearTokens()
+      unreadNotificationIdsRef.current.clear()
+      seenNotificationIdsRef.current.clear()
+      notificationBootstrapRef.current = true
+      setUnreadNotificationsCount(0)
+      setLiveToast(null)
       setSession({ status: 'anonymous', tokens: null })
       setLoggingOut(false)
       setCreateEventOpen(false)
@@ -2364,6 +2955,74 @@ function App() {
   }
 
   const isAuthenticated = session.status === 'authenticated'
+
+  const handleNotificationReceived = useCallback((notification) => {
+    if (notification.read_at || seenNotificationIdsRef.current.has(notification.id)) {
+      return
+    }
+    seenNotificationIdsRef.current.add(notification.id)
+    unreadNotificationIdsRef.current.add(notification.id)
+    setUnreadNotificationsCount(unreadNotificationIdsRef.current.size)
+    if (notificationBootstrapRef.current) return
+    notificationListenersRef.current.forEach((listener) => listener(notification))
+    setLiveToast({
+      id: notification.id,
+      message: notification.message,
+      type: notification.type,
+    })
+  }, [])
+
+  useNotifications({
+    enabled: isAuthenticated,
+    tokens: session.tokens,
+    onNotificationReceived: handleNotificationReceived,
+    onSessionExpired: handleSessionExpired,
+    onTokensChanged: handleTokensChanged,
+  })
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined
+
+    let cancelled = false
+    async function loadInitialUnread() {
+      try {
+        const result = await listNotifications({
+          tokens: session.tokens,
+          context: 'all',
+        })
+        if (!cancelled && validateNotificationList(result.data)) {
+          if (result.tokens.access_token !== session.tokens.access_token) {
+            handleTokensChanged(result.tokens)
+          }
+          syncUnreadNotifications(result.data)
+        }
+      } catch (error) {
+        if (!cancelled && error instanceof SessionExpiredError) {
+          handleSessionExpired(error.message)
+        }
+      } finally {
+        if (!cancelled) notificationBootstrapRef.current = false
+      }
+    }
+
+    loadInitialUnread()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    handleSessionExpired,
+    handleTokensChanged,
+    isAuthenticated,
+    session.tokens,
+    syncUnreadNotifications,
+  ])
+
+  useEffect(() => {
+    if (!liveToast) return undefined
+    const timer = window.setTimeout(() => setLiveToast(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [liveToast])
+
   const eventMetadata = useEventMetadata({
     enabled: isAuthenticated,
     tokens: session.tokens,
@@ -2406,6 +3065,14 @@ function App() {
         />
       ),
       bookings: <BookingsPage {...pageProps} />,
+      notifications: (
+        <NotificationsPage
+          {...pageProps}
+          onNotificationRead={handleNotificationRead}
+          onAllNotificationsRead={handleAllNotificationsRead}
+          subscribeToNotifications={subscribeToNotifications}
+        />
+      ),
       users: <UsersPage {...pageProps} />,
       logs: <LogsPage {...pageProps} />,
     }[resolvedPage]
@@ -2418,8 +3085,38 @@ function App() {
         onCreateEvent={() => setCreateEventOpen(true)}
         onLogout={handleLogout}
         loggingOut={loggingOut}
+        unreadNotificationsCount={unreadNotificationsCount}
       >
         {appNotice && <div className="app-toast" role="status">✓ {appNotice}</div>}
+        {liveToast && (
+          <div className="notification-toast" role="status">
+            <div className="notification-toast-content">
+              <span className="notification-toast-icon">🔔</span>
+              <div>
+                <strong>{formatNotificationType(liveToast.type)}</strong>
+                <p>{liveToast.message}</p>
+              </div>
+            </div>
+            <button
+              className="notification-toast-view"
+              type="button"
+              onClick={() => {
+                setLiveToast(null)
+                handleAppNavigate('notifications')
+              }}
+            >
+              View
+            </button>
+            <button
+              className="notification-toast-close"
+              type="button"
+              onClick={() => setLiveToast(null)}
+              aria-label="Dismiss notification toast"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {pageContent}
         {createEventOpen && ['organizer', 'admin'].includes(role) && (
           <CreateEventModal
