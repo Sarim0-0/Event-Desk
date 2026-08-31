@@ -6,8 +6,12 @@ import {
   refreshAccessToken,
   signUp,
 } from './api/auth.js'
-import { listEvents } from './api/events.js'
-import { listBookings } from './api/bookings.js'
+import {
+  createEvent,
+  getEventAvailabilitySocketUrl,
+  listEvents,
+} from './api/events.js'
+import { createBooking, listBookings } from './api/bookings.js'
 import { listUsers } from './api/users.js'
 import { listAuditLogs } from './api/auditLogs.js'
 import { SessionExpiredError } from './api/authenticated.js'
@@ -698,20 +702,22 @@ function EventMetaIcon({ type }) {
   )
 }
 
-function EventCard({ event, index }) {
+function EventCard({ event, index, onSelect }) {
   const date = formatEventDate(event.event_datetime)
   const ticketsAvailable = Number(event.tickets_available)
+  const totalTickets = Number(event.total_tickets)
   const ticketLabel =
     ticketsAvailable === 0
       ? 'Sold out'
-      : `${ticketsAvailable} ticket${ticketsAvailable === 1 ? '' : 's'} available`
+      : `${ticketsAvailable} of ${totalTickets} tickets remaining`
 
   return (
     <button
       className="event-card"
       type="button"
       aria-label={`View ${event.title}`}
-      title="Event details coming soon"
+      title={`View details for ${event.title}`}
+      onClick={() => onSelect(event)}
     >
       <div className={`event-card-cover event-theme-${index % EVENT_CARD_THEME_COUNT}`}>
         <span className="event-status">{event.status}</span>
@@ -797,6 +803,7 @@ function ApplicationShell({
   role,
   currentPage,
   onNavigate,
+  onCreateEvent,
   onLogout,
   loggingOut,
   children,
@@ -836,7 +843,7 @@ function ApplicationShell({
             <button
               className="create-event-button"
               type="button"
-              title="Event creation coming soon"
+              onClick={onCreateEvent}
             >
               <AppIcon type="plus" />
               Create event
@@ -925,9 +932,443 @@ function getResourceErrorMessage(error, resource) {
   return `We could not load ${resource}. Check your connection and try again.`
 }
 
+function getFormApiErrors(error, fields, fallbackMessage) {
+  if (!(error instanceof ApiError)) {
+    return {
+      fieldErrors: {},
+      message: 'Unable to reach EventDesk. Check that the API is running and try again.',
+    }
+  }
+
+  const detail = error.payload?.detail
+  if (!Array.isArray(detail)) {
+    return {
+      fieldErrors: {},
+      message: typeof detail === 'string' ? detail : fallbackMessage,
+    }
+  }
+
+  const fieldErrors = {}
+  const generalErrors = []
+  detail.forEach((issue) => {
+    const field = issue.loc?.at(-1)
+    const message = String(issue.msg || 'This value is invalid.').replace(
+      /^Value error,\s*/i,
+      '',
+    )
+    if (fields.includes(field)) fieldErrors[field] ??= message
+    else generalErrors.push(message)
+  })
+
+  return {
+    fieldErrors,
+    message: generalErrors.join(' ') || null,
+  }
+}
+
+function Modal({ titleId, onClose, className = '', children }) {
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <section
+        className={`modal-panel ${className}`.trim()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <button
+          className="modal-close"
+          type="button"
+          onClick={onClose}
+          aria-label="Close dialog"
+        >
+          ×
+        </button>
+        {children}
+      </section>
+    </div>
+  )
+}
+
+const EMPTY_EVENT_FORM = {
+  title: '',
+  description: '',
+  venue: '',
+  event_datetime: '',
+  ticket_price: '',
+  total_tickets: '',
+}
+
+function CreateEventModal({
+  tokens,
+  onClose,
+  onCreated,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [form, setForm] = useState(EMPTY_EVENT_FORM)
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  function updateField(event) {
+    const { name, value } = event.target
+    setForm((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  function validate() {
+    const errors = {}
+    const eventDate = new Date(form.event_datetime)
+    const ticketPrice = Number(form.ticket_price)
+    const totalTickets = Number(form.total_tickets)
+
+    if (!form.title.trim()) errors.title = 'Event name is required.'
+    else if (characterLength(form.title.trim()) > 255) {
+      errors.title = 'Event name must contain at most 255 characters.'
+    }
+    if (!form.description.trim()) errors.description = 'Description is required.'
+    if (!form.venue.trim()) errors.venue = 'Venue is required.'
+    else if (characterLength(form.venue.trim()) > 255) {
+      errors.venue = 'Venue must contain at most 255 characters.'
+    }
+    if (!form.event_datetime || Number.isNaN(eventDate.getTime())) {
+      errors.event_datetime = 'Choose a valid event date and time.'
+    } else if (eventDate <= new Date()) {
+      errors.event_datetime = 'Event date and time must be in the future.'
+    }
+    if (form.ticket_price === '' || !Number.isFinite(ticketPrice) || ticketPrice < 0) {
+      errors.ticket_price = 'Enter a ticket price of 0 or more.'
+    } else if (!/^\d+(?:\.\d{1,2})?$/.test(form.ticket_price)) {
+      errors.ticket_price = 'Ticket price can have at most two decimal places.'
+    }
+    if (!Number.isInteger(totalTickets) || totalTickets < 1) {
+      errors.total_tickets = 'Enter at least one ticket.'
+    }
+    return errors
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const errors = validate()
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await createEvent({
+        tokens,
+        event: {
+          title: form.title.trim(),
+          description: form.description.trim(),
+          venue: form.venue.trim(),
+          event_datetime: new Date(form.event_datetime).toISOString(),
+          ticket_price: Number(form.ticket_price),
+          total_tickets: Number(form.total_tickets),
+          category_id: null,
+          tag_ids: [],
+          status: 'published',
+        },
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onCreated(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        Object.keys(EMPTY_EVENT_FORM),
+        'We could not create the event. Please try again.',
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal titleId="create-event-title" onClose={onClose} className="form-modal">
+      <div className="modal-heading">
+        <p className="eyebrow">New experience</p>
+        <h1 id="create-event-title">Create an event</h1>
+        <p>Your event will be published and shown in the events grid immediately.</p>
+      </div>
+      <Alert>{formError}</Alert>
+      <form className="event-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field event-form-wide">
+          <label htmlFor="event-title">Event name</label>
+          <input id="event-title" name="title" value={form.title} onChange={updateField} maxLength={255} className={fieldErrors.title ? 'input-error' : ''} placeholder="e.g. Product Design Meetup" />
+          <FieldError id="event-title-error">{fieldErrors.title}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="event-description">Description</label>
+          <textarea id="event-description" name="description" value={form.description} onChange={updateField} className={fieldErrors.description ? 'input-error' : ''} rows="4" placeholder="What should attendees know?" />
+          <FieldError id="event-description-error">{fieldErrors.description}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="event-venue">Venue</label>
+          <input id="event-venue" name="venue" value={form.venue} onChange={updateField} maxLength={255} className={fieldErrors.venue ? 'input-error' : ''} placeholder="Venue name and location" />
+          <FieldError id="event-venue-error">{fieldErrors.venue}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-datetime">Date and time</label>
+          <input id="event-datetime" name="event_datetime" type="datetime-local" value={form.event_datetime} onChange={updateField} className={fieldErrors.event_datetime ? 'input-error' : ''} />
+          <FieldError id="event-datetime-error">{fieldErrors.event_datetime}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-tickets">Total tickets</label>
+          <input id="event-tickets" name="total_tickets" type="number" min="1" step="1" value={form.total_tickets} onChange={updateField} className={fieldErrors.total_tickets ? 'input-error' : ''} placeholder="100" />
+          <FieldError id="event-tickets-error">{fieldErrors.total_tickets}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-price">Price per ticket</label>
+          <input id="event-price" name="ticket_price" type="number" min="0" step="0.01" value={form.ticket_price} onChange={updateField} className={fieldErrors.ticket_price ? 'input-error' : ''} placeholder="0.00" />
+          <FieldError id="event-price-error">{fieldErrors.ticket_price}</FieldError>
+        </div>
+        <div className="event-publish-note">
+          <strong>Published immediately</strong>
+          <span>The backend accepts category and tags as optional, so they can be added when lookup support is available.</span>
+        </div>
+        <div className="modal-actions event-form-wide">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Creating event…' : 'Create event'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function EventDetailsModal({
+  event,
+  tokens,
+  onClose,
+  onBooked,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [showBooking, setShowBooking] = useState(false)
+  const [quantity, setQuantity] = useState('1')
+  const [fieldError, setFieldError] = useState(null)
+  const [formError, setFormError] = useState(null)
+  const [confirmation, setConfirmation] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const date = formatEventDate(event.event_datetime)
+  const available = Number(event.tickets_available)
+  const total = Number(event.total_tickets)
+  const requestedQuantity = Number(quantity)
+  const ticketPrice = Number(event.ticket_price)
+  const bookingTotal = Number.isInteger(requestedQuantity)
+    ? ticketPrice * requestedQuantity
+    : 0
+
+  async function handleBooking(eventSubmit) {
+    eventSubmit.preventDefault()
+    if (
+      !Number.isInteger(requestedQuantity) ||
+      requestedQuantity < 1 ||
+      requestedQuantity > available
+    ) {
+      setFieldError(`Choose between 1 and ${available} ticket${available === 1 ? '' : 's'}.`)
+      return
+    }
+
+    setSubmitting(true)
+    setFieldError(null)
+    setFormError(null)
+    setConfirmation(null)
+    try {
+      const result = await createBooking({
+        tokens,
+        eventId: event.id,
+        quantity: requestedQuantity,
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      setConfirmation(
+        `${result.data.quantity} ticket${result.data.quantity === 1 ? '' : 's'} booked successfully.`,
+      )
+      setShowBooking(false)
+      onBooked(
+        result.data,
+        Math.max(0, available - Number(result.data.quantity)),
+      )
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['quantity'],
+        'We could not complete your booking. Please try again.',
+      )
+      setFieldError(apiErrors.fieldErrors.quantity)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal titleId="event-detail-title" onClose={onClose} className="event-detail-modal">
+      <div className="event-detail-cover">
+        <span className="event-status">{event.status}</span>
+        <div className="event-date-tile">
+          <strong>{date.day}</strong>
+          <span>{date.month}</span>
+        </div>
+        <span className="event-cover-shape event-cover-shape-one" />
+        <span className="event-cover-shape event-cover-shape-two" />
+      </div>
+      <div className="event-detail-content">
+        <div className="event-detail-heading">
+          <div>
+            <p className="eyebrow">Event details</p>
+            <h1 id="event-detail-title">{event.title}</h1>
+          </div>
+          <strong className="event-detail-price">
+            {formatTicketPrice(event.ticket_price)}
+            {ticketPrice > 0 && <small> per ticket</small>}
+          </strong>
+        </div>
+
+        <div className="event-detail-facts">
+          <span><EventMetaIcon type="calendar" /><strong>{date.full}</strong><small>{formatEventTime(event.event_datetime)}</small></span>
+          <span><EventMetaIcon type="location" /><strong>{event.venue}</strong><small>Venue</small></span>
+          <span><EventMetaIcon type="ticket" /><strong>{available} of {total}</strong><small>Tickets remaining</small></span>
+        </div>
+
+        <div className="event-detail-description">
+          <h2>About this event</h2>
+          <p>{event.description}</p>
+        </div>
+
+        <Alert type="success">{confirmation}</Alert>
+        <Alert>{formError}</Alert>
+
+        {showBooking ? (
+          <form className="booking-form" onSubmit={handleBooking} noValidate>
+            <div>
+              <label htmlFor="booking-quantity">Number of tickets</label>
+              <div className={`quantity-control ${fieldError ? 'input-error' : ''}`}>
+                <button type="button" onClick={() => setQuantity(String(Math.max(1, requestedQuantity - 1 || 1)))} aria-label="Decrease ticket quantity">−</button>
+                <input id="booking-quantity" name="quantity" type="number" min="1" max={available} step="1" value={quantity} onChange={(changeEvent) => { setQuantity(changeEvent.target.value); setFieldError(null); setFormError(null) }} />
+                <button type="button" onClick={() => setQuantity(String(Math.min(available, (requestedQuantity || 0) + 1)))} aria-label="Increase ticket quantity">+</button>
+              </div>
+              <FieldError id="booking-quantity-error">{fieldError}</FieldError>
+            </div>
+            <div className="booking-total">
+              <span>Total</span>
+              <strong>{formatTicketPrice(bookingTotal)}</strong>
+            </div>
+            <div className="booking-form-actions">
+              <button className="secondary-button" type="button" onClick={() => setShowBooking(false)} disabled={submitting}>Back</button>
+              <button className="primary-button" type="submit" disabled={submitting || available === 0}>
+                {submitting && <span className="spinner" aria-hidden="true" />}
+                {submitting ? 'Booking…' : 'Confirm booking'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="event-detail-actions">
+            <p>{available === 0 ? 'This event is sold out.' : `${available} ticket${available === 1 ? '' : 's'} currently available.`}</p>
+            <button className="primary-button" type="button" onClick={() => { setShowBooking(true); setConfirmation(null) }} disabled={available === 0 || Boolean(confirmation)}>
+              {confirmation ? 'Booking confirmed' : available === 0 ? 'Sold out' : 'Book event'}
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+function useEventAvailability(tokens, onAvailabilityUpdate) {
+  useEffect(() => {
+    let socket = null
+    let reconnectTimer = null
+    let heartbeatTimer = null
+    let stopped = false
+
+    function connect() {
+      if (stopped) return
+      socket = new WebSocket(
+        getEventAvailabilitySocketUrl(tokens.access_token),
+      )
+      socket.addEventListener('open', () => {
+        heartbeatTimer = window.setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send('keepalive')
+        }, 30000)
+      })
+      socket.addEventListener('message', (message) => {
+        try {
+          const payload = JSON.parse(message.data)
+          const availability = payload?.data
+          if (
+            payload?.type === 'event_availability_updated' &&
+            typeof availability?.event_id === 'string' &&
+            Number.isInteger(availability.total_tickets) &&
+            Number.isInteger(availability.tickets_available)
+          ) {
+            onAvailabilityUpdate(availability)
+          }
+        } catch {
+          // Ignore messages that do not match the backend availability schema.
+        }
+      })
+      socket.addEventListener('close', () => {
+        if (heartbeatTimer) window.clearInterval(heartbeatTimer)
+        if (!stopped) reconnectTimer = window.setTimeout(connect, 2000)
+      })
+      socket.addEventListener('error', () => socket?.close())
+    }
+
+    connect()
+    return () => {
+      stopped = true
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer)
+      socket?.close()
+    }
+  }, [onAvailabilityUpdate, tokens.access_token])
+}
+
 function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
   const [page, setPage] = useState(1)
   const [eventPage, setEventPage] = useState(null)
+  const [selectedEvent, setSelectedEvent] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
@@ -936,6 +1377,28 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
   useEffect(() => {
     tokensRef.current = tokens
   }, [tokens])
+
+  const handleAvailabilityUpdate = useCallback((availability) => {
+    const applyAvailability = (event) =>
+      event.id === availability.event_id
+        ? {
+            ...event,
+            total_tickets: availability.total_tickets,
+            tickets_available: availability.tickets_available,
+          }
+        : event
+
+    setEventPage((current) =>
+      current
+        ? { ...current, items: current.items.map(applyAvailability) }
+        : current,
+    )
+    setSelectedEvent((current) =>
+      current ? applyAvailability(current) : current,
+    )
+  }, [])
+
+  useEventAvailability(tokens, handleAvailabilityUpdate)
 
   useEffect(() => {
     let cancelled = false
@@ -999,8 +1462,40 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
     }
 
     setPage(nextPage)
+    setSelectedEvent(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  const handleBooked = useCallback((booking, remainingTickets) => {
+    setEventPage((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        items: current.items.map((event) =>
+          event.id === booking.event_id
+            ? {
+                ...event,
+                tickets_available: Math.min(
+                  Number(event.tickets_available),
+                  remainingTickets,
+                ),
+              }
+            : event,
+        ),
+      }
+    })
+    setSelectedEvent((current) =>
+      current?.id === booking.event_id
+        ? {
+            ...current,
+            tickets_available: Math.min(
+              Number(current.tickets_available),
+              remainingTickets,
+            ),
+          }
+        : current,
+    )
+  }, [])
 
   return (
     <section className="events-content" aria-labelledby="events-title">
@@ -1043,7 +1538,12 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
           <>
             <div className="events-grid">
               {eventPage.items.map((event, index) => (
-                <EventCard event={event} index={index} key={event.id} />
+                <EventCard
+                  event={event}
+                  index={index}
+                  onSelect={setSelectedEvent}
+                  key={event.id}
+                />
               ))}
             </div>
 
@@ -1075,6 +1575,16 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
               </div>
             </nav>
           </>
+        )}
+        {selectedEvent && (
+          <EventDetailsModal
+            event={selectedEvent}
+            tokens={tokens}
+            onClose={() => setSelectedEvent(null)}
+            onBooked={handleBooked}
+            onSessionExpired={onSessionExpired}
+            onTokensChanged={onTokensChanged}
+          />
         )}
     </section>
   )
@@ -1481,6 +1991,9 @@ function App() {
   const [notice, setNotice] = useState('')
   const [noticeType, setNoticeType] = useState('success')
   const [loggingOut, setLoggingOut] = useState(false)
+  const [createEventOpen, setCreateEventOpen] = useState(false)
+  const [eventReloadVersion, setEventReloadVersion] = useState(0)
+  const [appNotice, setAppNotice] = useState('')
   const [session, setSession] = useState(() => {
     const tokens = getStoredTokens()
 
@@ -1568,10 +2081,17 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
+  useEffect(() => {
+    if (!appNotice) return undefined
+    const timer = window.setTimeout(() => setAppNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [appNotice])
+
   const handleSessionExpired = useCallback((message) => {
     clearTokens()
     setSession({ status: 'anonymous', tokens: null })
     setLoggingOut(false)
+    setCreateEventOpen(false)
     setView('login')
     setNoticeType('error')
     setNotice(message || 'Your session has expired. Please log in again.')
@@ -1590,6 +2110,7 @@ function App() {
       clearTokens()
       setSession({ status: 'anonymous', tokens: null })
       setLoggingOut(false)
+      setCreateEventOpen(false)
       setView('login')
       window.history.replaceState({}, '', '/login')
       setNoticeType('success')
@@ -1605,6 +2126,14 @@ function App() {
   const isAdminPage = ['users', 'logs'].includes(appPage)
   const resolvedPage = isAdminPage && role !== 'admin' ? 'events' : appPage
 
+  function handleEventCreated(event) {
+    setCreateEventOpen(false)
+    setAppPage('events')
+    setEventReloadVersion((version) => version + 1)
+    setAppNotice(`${event.title} was created and published.`)
+    window.history.pushState({}, '', '/events')
+  }
+
   useEffect(() => {
     if (isAuthenticated && resolvedPage !== appPage) {
       window.history.replaceState({}, '', `/${resolvedPage}`)
@@ -1618,7 +2147,7 @@ function App() {
       onTokensChanged: handleTokensChanged,
     }
     const pageContent = {
-      events: <EventsPage {...pageProps} />,
+      events: <EventsPage {...pageProps} key={eventReloadVersion} />,
       bookings: <BookingsPage {...pageProps} />,
       users: <UsersPage {...pageProps} />,
       logs: <LogsPage {...pageProps} />,
@@ -1629,10 +2158,21 @@ function App() {
         role={role}
         currentPage={resolvedPage}
         onNavigate={handleAppNavigate}
+        onCreateEvent={() => setCreateEventOpen(true)}
         onLogout={handleLogout}
         loggingOut={loggingOut}
       >
+        {appNotice && <div className="app-toast" role="status">✓ {appNotice}</div>}
         {pageContent}
+        {createEventOpen && ['organizer', 'admin'].includes(role) && (
+          <CreateEventModal
+            tokens={session.tokens}
+            onClose={() => setCreateEventOpen(false)}
+            onCreated={handleEventCreated}
+            onSessionExpired={handleSessionExpired}
+            onTokensChanged={handleTokensChanged}
+          />
+        )}
       </ApplicationShell>
     )
   }
