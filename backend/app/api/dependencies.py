@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -57,15 +56,6 @@ CurrentWebSocketUserId = Annotated[
 ]
 
 
-@dataclass(frozen=True)
-class PermissionGrant:
-    user: User
-    permission_keys: frozenset[str]
-
-    def allows(self, permission_key: str) -> bool:
-        return permission_key in self.permission_keys
-
-
 def require_permission(permission_key: str):
     """Build a dependency that allows users with one database permission."""
 
@@ -88,17 +78,18 @@ def require_permission(permission_key: str):
     return permission_dependency
 
 
-def require_any_permission(*permission_keys: str):
-    """Allow users whose role has at least one requested permission."""
+def require_own_or_any_permission(
+    own_permission: str,
+    any_permission: str,
+):
+    """Require own or any access and report whether any access was granted."""
 
-    requested_permissions = frozenset(permission_keys)
-    if not requested_permissions:
-        raise ValueError("At least one permission key is required.")
+    requested_permissions = frozenset({own_permission, any_permission})
 
     async def permission_dependency(
         current_user: CurrentUser,
         session: DatabaseSession,
-    ) -> PermissionGrant:
+    ) -> bool:
         granted_permissions = await get_role_permission_keys(
             session,
             current_user.role_id,
@@ -110,10 +101,7 @@ def require_any_permission(*permission_keys: str):
                 detail="You do not have permission to perform this action.",
             )
 
-        return PermissionGrant(
-            user=current_user,
-            permission_keys=granted_permissions,
-        )
+        return any_permission in granted_permissions
 
     return permission_dependency
 

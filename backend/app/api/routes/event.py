@@ -6,8 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from app.api.dependencies import (
     CurrentUser,
     DatabaseSession,
-    PermissionGrant,
-    require_any_permission,
+    require_own_or_any_permission,
     require_permission,
 )
 from app.core.permissions import (
@@ -95,10 +94,11 @@ async def list_tags_endpoint(
 )
 async def list_draft_events_endpoint(
     query: Annotated[EventListQuery, Query()],
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_view_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 EDIT_OWN_EVENT,
                 EDIT_ANY_EVENT,
             )
@@ -108,10 +108,9 @@ async def list_draft_events_endpoint(
 ) -> PaginatedEventsResponse:
     return await list_draft_events(
         session,
-        permission_grant.user,
+        current_user,
         query,
-        can_view_own=permission_grant.allows(EDIT_OWN_EVENT),
-        can_view_any=permission_grant.allows(EDIT_ANY_EVENT),
+        can_view_any=can_view_any,
     )
 
 
@@ -141,10 +140,11 @@ async def update_event_endpoint(
     event_id: UUID,
     request: EventUpdate,
     background_tasks: BackgroundTasks,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_edit_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 EDIT_OWN_EVENT,
                 EDIT_ANY_EVENT,
             )
@@ -154,11 +154,10 @@ async def update_event_endpoint(
 ) -> EventResponse:
     event = await update_event(
         session,
-        permission_grant.user,
+        current_user,
         event_id,
         request,
-        can_edit_own=permission_grant.allows(EDIT_OWN_EVENT),
-        can_edit_any=permission_grant.allows(EDIT_ANY_EVENT),
+        can_edit_any=can_edit_any,
     )
     if "total_tickets" in request.model_fields_set:
         background_tasks.add_task(
@@ -177,10 +176,11 @@ async def update_event_endpoint(
 async def cancel_event_endpoint(
     event_id: UUID,
     background_tasks: BackgroundTasks,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_cancel_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 CANCEL_OWN_EVENT,
                 CANCEL_ANY_EVENT,
             )
@@ -190,10 +190,9 @@ async def cancel_event_endpoint(
 ) -> EventResponse:
     event = await cancel_event(
         session,
-        permission_grant.user,
+        current_user,
         event_id,
-        can_cancel_own=permission_grant.allows(CANCEL_OWN_EVENT),
-        can_cancel_any=permission_grant.allows(CANCEL_ANY_EVENT),
+        can_cancel_any=can_cancel_any,
     )
     background_tasks.add_task(
         create_event_cancellation_notifications_in_background,

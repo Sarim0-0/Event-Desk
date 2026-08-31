@@ -75,15 +75,9 @@ async def list_draft_events(
     current_user: User,
     query: EventListQuery,
     *,
-    can_view_own: bool,
     can_view_any: bool,
 ) -> PaginatedEventsResponse:
     """Return drafts visible through the caller's Event permissions."""
-
-    if not can_view_any and not can_view_own:
-        raise ForbiddenError(
-            "You do not have permission to view draft Events."
-        )
 
     organizer_id = None if can_view_any else current_user.id
     total_items = await event_repository.count_draft_events(
@@ -236,7 +230,6 @@ async def update_event(
     event_id: UUID,
     request: EventUpdate,
     *,
-    can_edit_own: bool,
     can_edit_any: bool,
 ) -> EventResponse:
     try:
@@ -252,10 +245,7 @@ async def update_event(
         }:
             raise ConflictError("This Event can no longer be edited.")
 
-        if not can_edit_any and (
-            not can_edit_own
-            or event.organizer_id != current_user.id
-        ):
+        if not can_edit_any and event.organizer_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to edit this Event."
             )
@@ -332,7 +322,6 @@ async def cancel_event(
     current_user: User,
     event_id: UUID,
     *,
-    can_cancel_own: bool,
     can_cancel_any: bool,
 ) -> EventResponse:
     try:
@@ -352,10 +341,7 @@ async def cancel_event(
         if event.status is EventStatus.COMPLETED:
             raise ConflictError("This Event can no longer be cancelled.")
 
-        if not can_cancel_any and (
-            not can_cancel_own
-            or event.organizer_id != current_user.id
-        ):
+        if not can_cancel_any and event.organizer_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to cancel this Event."
             )

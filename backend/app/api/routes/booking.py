@@ -6,8 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from app.api.dependencies import (
     CurrentUser,
     DatabaseSession,
-    PermissionGrant,
-    require_any_permission,
+    require_own_or_any_permission,
 )
 from app.core.permissions import (
     CANCEL_ANY_BOOKING,
@@ -82,10 +81,11 @@ async def create_booking_endpoint(
 async def cancel_booking_endpoint(
     booking_id: UUID,
     background_tasks: BackgroundTasks,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_cancel_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 CANCEL_OWN_BOOKING,
                 CANCEL_ANY_BOOKING,
             )
@@ -95,10 +95,9 @@ async def cancel_booking_endpoint(
 ) -> BookingResponse:
     booking = await cancel_booking(
         session,
-        permission_grant.user,
+        current_user,
         booking_id,
-        can_cancel_own=permission_grant.allows(CANCEL_OWN_BOOKING),
-        can_cancel_any=permission_grant.allows(CANCEL_ANY_BOOKING),
+        can_cancel_any=can_cancel_any,
     )
     background_tasks.add_task(
         create_notification_in_background,

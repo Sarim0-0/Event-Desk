@@ -137,7 +137,6 @@ async def cancel_booking(
     current_user: User,
     booking_id: UUID,
     *,
-    can_cancel_own: bool,
     can_cancel_any: bool,
 ) -> BookingResponse:
     try:
@@ -168,10 +167,7 @@ async def cancel_booking(
         if booking.status is BookingStatus.CANCELLED:
             raise ConflictError("The booking has already been cancelled.")
 
-        if not can_cancel_any and (
-            not can_cancel_own
-            or booking.user_id != current_user.id
-        ):
+        if not can_cancel_any and booking.user_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to cancel this booking."
             )

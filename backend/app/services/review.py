@@ -21,19 +21,13 @@ async def list_event_reviews(
     session: AsyncSession,
     current_user: User,
     *,
-    can_view_own_events: bool,
-    can_view_any_event: bool,
+    can_view_any: bool,
 ) -> list[EventReviewsResponse]:
     """Group visible Reviews under the Event to which they belong."""
 
-    if not can_view_own_events and not can_view_any_event:
-        raise ForbiddenError(
-            "You do not have permission to view Event Reviews."
-        )
-
     reviews = await review_repository.list_manageable_reviews(
         session,
-        organizer_id=None if can_view_any_event else current_user.id,
+        organizer_id=None if can_view_any else current_user.id,
     )
     groups: dict[UUID, EventReviewsResponse] = {}
 
@@ -141,7 +135,6 @@ async def update_review(
     review_id: UUID,
     request: ReviewUpdate,
     *,
-    can_update_own: bool,
     can_update_any: bool,
 ) -> ReviewResponse:
     try:
@@ -151,10 +144,7 @@ async def update_review(
         if review is None:
             raise NotFoundError("The selected review does not exist.")
 
-        if not can_update_any and (
-            not can_update_own
-            or review.booking.user_id != current_user.id
-        ):
+        if not can_update_any and review.booking.user_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to edit this review."
             )
@@ -181,7 +171,6 @@ async def delete_review(
     current_user: User,
     review_id: UUID,
     *,
-    can_delete_own: bool,
     can_delete_any: bool,
 ) -> None:
     try:
@@ -189,10 +178,7 @@ async def delete_review(
         if review is None:
             raise NotFoundError("The selected review does not exist.")
 
-        if not can_delete_any and (
-            not can_delete_own
-            or review.booking.user_id != current_user.id
-        ):
+        if not can_delete_any and review.booking.user_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to delete this review."
             )
