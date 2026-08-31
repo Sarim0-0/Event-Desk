@@ -1,23 +1,19 @@
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    Depends,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
 
 from app.api.dependencies import (
+    CurrentUser,
     CurrentWebSocketUserId,
     DatabaseSession,
-    require_permission,
 )
-from app.core.permissions import VIEW_OWN_NOTIFICATIONS
 from app.database.session import async_session_factory
 from app.models.enums import NotificationContextFilter
-from app.models.user import User
 from app.realtime.manager import notification_connection_manager
 from app.schemas.notification import (
     NotificationResponse,
@@ -41,10 +37,7 @@ router = APIRouter(tags=["Notifications"])
     name="list_notifications",
 )
 async def list_notifications_endpoint(
-    current_user: Annotated[
-        User,
-        Depends(require_permission(VIEW_OWN_NOTIFICATIONS)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
     context: NotificationContextFilter = NotificationContextFilter.ALL,
 ) -> list[NotificationResponse]:
@@ -62,10 +55,7 @@ async def list_notifications_endpoint(
     name="mark_all_notifications_read",
 )
 async def mark_all_notifications_read_endpoint(
-    current_user: Annotated[
-        User,
-        Depends(require_permission(VIEW_OWN_NOTIFICATIONS)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> NotificationsReadAllResponse:
     return await mark_all_notifications_read(session, current_user)
@@ -79,10 +69,7 @@ async def mark_all_notifications_read_endpoint(
 )
 async def mark_notification_read_endpoint(
     notification_id: UUID,
-    current_user: Annotated[
-        User,
-        Depends(require_permission(VIEW_OWN_NOTIFICATIONS)),
-    ],
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> NotificationResponse:
     return await mark_notification_read(

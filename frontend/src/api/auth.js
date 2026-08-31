@@ -10,7 +10,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body } = {}) {
+export async function request(
+  path,
+  { method = 'GET', body, accessToken } = {},
+) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method,
     mode: 'cors',
@@ -18,6 +21,7 @@ async function request(path, { method = 'GET', body } = {}) {
     headers: {
       Accept: 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })

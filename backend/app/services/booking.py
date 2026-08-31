@@ -5,10 +5,48 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models.enums import BookingStatus, EventStatus
+from app.models.enums import (
+    AuditAction,
+    AuditEntityType,
+    BookingStatus,
+    EventStatus,
+)
 from app.models.user import User
 from app.repositories import booking as booking_repository
-from app.schemas.booking import BookingCreate, BookingResponse
+from app.schemas.booking import (
+    BOOKINGS_PER_PAGE,
+    BookingCreate,
+    BookingListQuery,
+    BookingResponse,
+    PaginatedBookingsResponse,
+)
+from app.services import audit as audit_service
+
+
+async def list_own_bookings(
+    session: AsyncSession,
+    current_user: User,
+    query: BookingListQuery,
+) -> PaginatedBookingsResponse:
+    """Return one read-only page of the authenticated User's Bookings."""
+
+    total_items = await booking_repository.count_bookings_by_user(
+        session,
+        current_user.id,
+    )
+    bookings = await booking_repository.list_bookings_by_user(
+        session,
+        user_id=current_user.id,
+        page=query.page,
+    )
+    total_pages = (total_items + BOOKINGS_PER_PAGE - 1) // BOOKINGS_PER_PAGE
+
+    return PaginatedBookingsResponse(
+        items=[BookingResponse.model_validate(booking) for booking in bookings],
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
 
 
 async def create_booking(
@@ -59,6 +97,14 @@ async def create_booking(
         )
         await booking_repository.flush_booking(session, booking)
         await booking_repository.refresh_booking(session, booking)
+
+        audit_service.record_action(
+            session,
+            actor_id=current_user.id,
+            action=AuditAction.BOOKING_CREATED,
+            entity_type=AuditEntityType.BOOKING,
+            entity_id=booking.id,
+        )
 
         response = BookingResponse.model_validate(booking)
 
@@ -134,6 +180,14 @@ async def cancel_booking(
 
         await booking_repository.flush_booking(session, booking)
         await booking_repository.refresh_booking(session, booking)
+
+        audit_service.record_action(
+            session,
+            actor_id=current_user.id,
+            action=AuditAction.BOOKING_CANCELLED,
+            entity_type=AuditEntityType.BOOKING,
+            entity_id=booking.id,
+        )
 
         response = BookingResponse.model_validate(booking)
 

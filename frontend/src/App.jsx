@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ApiError,
   logIn,
@@ -6,6 +6,7 @@ import {
   refreshAccessToken,
   signUp,
 } from './api/auth.js'
+import { listEvents } from './api/events.js'
 import {
   clearTokens,
   getAccessTokenClaims,
@@ -480,7 +481,13 @@ function SignupForm({ onRegistered, onSwitch }) {
   )
 }
 
-function LoginForm({ initialEmail, notice, onAuthenticated, onSwitch }) {
+function LoginForm({
+  initialEmail,
+  notice,
+  noticeType,
+  onAuthenticated,
+  onSwitch,
+}) {
   const [form, setForm] = useState({ email: initialEmail, password: '' })
   const [fieldErrors, setFieldErrors] = useState({})
   const [formError, setFormError] = useState(null)
@@ -544,7 +551,7 @@ function LoginForm({ initialEmail, notice, onAuthenticated, onSwitch }) {
         <p>Pick up where you left off and make the next event happen.</p>
       </div>
 
-      <Alert type="success">{notice}</Alert>
+      <Alert type={noticeType}>{notice}</Alert>
       <Alert>{formError}</Alert>
 
       <form onSubmit={handleSubmit} noValidate>
@@ -589,36 +596,391 @@ function LoginForm({ initialEmail, notice, onAuthenticated, onSwitch }) {
   )
 }
 
-function AuthenticatedPanel({ tokens, onLogout, loggingOut }) {
-  const claims = getAccessTokenClaims(tokens.access_token)
-  const role = claims?.role
+const EVENT_CARD_THEME_COUNT = 6
+
+class UnexpectedEventResponseError extends Error {}
+
+function formatEventDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return { day: '--', month: 'TBD', full: 'Date to be announced' }
+  }
+
+  return {
+    day: new Intl.DateTimeFormat(undefined, { day: '2-digit' }).format(date),
+    month: new Intl.DateTimeFormat(undefined, { month: 'short' })
+      .format(date)
+      .toUpperCase(),
+    full: new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(date),
+  }
+}
+
+function formatEventTime(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Time to be announced'
+
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function formatTicketPrice(value) {
+  const price = Number(value)
+  if (!Number.isFinite(price)) return 'Price unavailable'
+  if (price === 0) return 'Free'
+
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(price)
+}
+
+function validateEventPage(payload) {
+  return (
+    payload &&
+    Array.isArray(payload.items) &&
+    Number.isInteger(payload.page) &&
+    payload.page >= 1 &&
+    payload.page_size === 6 &&
+    Number.isInteger(payload.total_items) &&
+    payload.total_items >= 0 &&
+    Number.isInteger(payload.total_pages) &&
+    payload.total_pages >= 0
+  )
+}
+
+function getEventErrorMessage(error) {
+  if (error instanceof ApiError) {
+    const detail = error.payload?.detail
+    if (typeof detail === 'string') return detail
+  }
+
+  if (error instanceof UnexpectedEventResponseError) {
+    return 'The event service returned an unexpected response. Please try again.'
+  }
+
+  return 'We could not load events. Check your connection and try again.'
+}
+
+function EventMetaIcon({ type }) {
+  if (type === 'location') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1116 0z" />
+        <circle cx="12" cy="10" r="2.5" />
+      </svg>
+    )
+  }
+
+  if (type === 'ticket') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 010 4v2a2 2 0 01-2 2H5a2 2 0 00-2-2v-2a2 2 0 010-4V8zM13 7v2M13 11v2M13 15v2" />
+      </svg>
+    )
+  }
 
   return (
-    <div className="auth-form-panel session-panel">
-      <div className="success-orbit" aria-hidden="true">
-        <span>✓</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M16 3v4M8 3v4M3 10h18" />
+    </svg>
+  )
+}
+
+function EventCard({ event, index }) {
+  const date = formatEventDate(event.event_datetime)
+  const ticketsAvailable = Number(event.tickets_available)
+  const ticketLabel =
+    ticketsAvailable === 0
+      ? 'Sold out'
+      : `${ticketsAvailable} ticket${ticketsAvailable === 1 ? '' : 's'} available`
+
+  return (
+    <button
+      className="event-card"
+      type="button"
+      aria-label={`View ${event.title}`}
+      title="Event details coming soon"
+    >
+      <div className={`event-card-cover event-theme-${index % EVENT_CARD_THEME_COUNT}`}>
+        <span className="event-status">{event.status}</span>
+        <div className="event-date-tile">
+          <strong>{date.day}</strong>
+          <span>{date.month}</span>
+        </div>
+        <span className="event-cover-shape event-cover-shape-one" />
+        <span className="event-cover-shape event-cover-shape-two" />
       </div>
-      <div className="form-heading">
-        <p className="eyebrow">You’re all set</p>
-        <h1>Welcome to EventDesk</h1>
-        <p>
-          You’re securely signed in{role ? ` as an ${role}` : ''}. Your session
-          is ready for the rest of the app.
-        </p>
+
+      <div className="event-card-body">
+        <div className="event-card-heading">
+          <h2>{event.title}</h2>
+          <span className="event-price">{formatTicketPrice(event.ticket_price)}</span>
+        </div>
+        <p className="event-description">{event.description}</p>
+
+        <div className="event-meta">
+          <span>
+            <EventMetaIcon type="calendar" />
+            {date.full} at {formatEventTime(event.event_datetime)}
+          </span>
+          <span>
+            <EventMetaIcon type="location" />
+            {event.venue}
+          </span>
+        </div>
+
+        <div className="event-card-footer">
+          <span className={ticketsAvailable === 0 ? 'tickets-sold-out' : ''}>
+            <EventMetaIcon type="ticket" />
+            {ticketLabel}
+          </span>
+          <span className="event-arrow" aria-hidden="true">→</span>
+        </div>
       </div>
-      <div className="session-note">
-        <span className="status-dot" aria-hidden="true" />
-        Active session
+    </button>
+  )
+}
+
+function EventCardSkeleton() {
+  return (
+    <div className="event-card event-card-skeleton" aria-hidden="true">
+      <div className="event-card-cover skeleton-block" />
+      <div className="event-card-body">
+        <span className="skeleton-line skeleton-title" />
+        <span className="skeleton-line" />
+        <span className="skeleton-line skeleton-short" />
+        <div className="skeleton-meta">
+          <span className="skeleton-line" />
+          <span className="skeleton-line" />
+        </div>
       </div>
-      <button
-        className="secondary-button"
-        type="button"
-        onClick={onLogout}
-        disabled={loggingOut}
-      >
-        {loggingOut ? 'Logging out…' : 'Log out'}
-      </button>
     </div>
+  )
+}
+
+function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
+  const [page, setPage] = useState(1)
+  const [eventPage, setEventPage] = useState(null)
+  const [activeTokens, setActiveTokens] = useState(tokens)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const claims = getAccessTokenClaims(activeTokens.access_token)
+  const role = typeof claims?.role === 'string' ? claims.role : 'user'
+  const profileInitial = role.charAt(0).toUpperCase()
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPage() {
+      setLoading(true)
+      setError(null)
+
+      try {
+        const response = await listEvents({
+          accessToken: activeTokens.access_token,
+          page,
+        })
+
+        if (!validateEventPage(response)) {
+          throw new UnexpectedEventResponseError(
+            'Invalid paginated event response.',
+          )
+        }
+
+        if (!cancelled) {
+          setEventPage(response)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+
+        if (requestError instanceof ApiError && requestError.status === 401) {
+          try {
+            const refreshed = await refreshAccessToken(
+              activeTokens.refresh_token,
+            )
+            const nextTokens = updateAccessToken(refreshed.access_token)
+
+            if (!nextTokens) {
+              onSessionExpired('Your session has expired. Please log in again.')
+              return
+            }
+
+            if (!cancelled) setActiveTokens(nextTokens)
+          } catch (refreshError) {
+            if (cancelled) return
+
+            if (
+              refreshError instanceof ApiError &&
+              [401, 403].includes(refreshError.status)
+            ) {
+              onSessionExpired(
+                typeof refreshError.payload?.detail === 'string'
+                  ? refreshError.payload.detail
+                  : 'Your session has expired. Please log in again.',
+              )
+              return
+            }
+
+            setError(getEventErrorMessage(refreshError))
+            setLoading(false)
+          }
+          return
+        }
+
+        if (requestError instanceof ApiError && requestError.status === 403) {
+          onSessionExpired(
+            typeof requestError.payload?.detail === 'string'
+              ? requestError.payload.detail
+              : 'Your account cannot access events.',
+          )
+          return
+        }
+
+        setError(getEventErrorMessage(requestError))
+        setLoading(false)
+      }
+    }
+
+    loadPage()
+    return () => {
+      cancelled = true
+    }
+  }, [activeTokens, onSessionExpired, page, retryCount])
+
+  const firstVisibleItem = eventPage?.total_items
+    ? (eventPage.page - 1) * eventPage.page_size + 1
+    : 0
+  const lastVisibleItem = eventPage?.total_items
+    ? Math.min(
+        eventPage.page * eventPage.page_size,
+        eventPage.total_items,
+      )
+    : 0
+
+  function changePage(nextPage) {
+    if (
+      loading ||
+      !eventPage ||
+      nextPage < 1 ||
+      nextPage > eventPage.total_pages ||
+      nextPage === page
+    ) {
+      return
+    }
+
+    setPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  return (
+    <main className="events-page">
+      <header className="events-header">
+        <BrandMark />
+        <div className="events-header-actions">
+          <button
+            className="logout-button"
+            type="button"
+            onClick={onLogout}
+            disabled={loggingOut}
+          >
+            {loggingOut ? 'Logging out...' : 'Log out'}
+          </button>
+          <button
+            className="profile-button"
+            type="button"
+            aria-label={`${role} profile. Profile page coming soon.`}
+            title="Profile coming soon"
+          >
+            {profileInitial}
+          </button>
+        </div>
+      </header>
+
+      <section className="events-content" aria-labelledby="events-title">
+        <div className="events-intro">
+          <div>
+            <p className="eyebrow">Upcoming experiences</p>
+            <h1 id="events-title">Explore events</h1>
+            <p>Find something worth showing up for.</p>
+          </div>
+          {!loading && eventPage && (
+            <p className="events-count">
+              {eventPage.total_items}{' '}
+              {eventPage.total_items === 1 ? 'event' : 'events'} available
+            </p>
+          )}
+        </div>
+
+        {error ? (
+          <div className="events-state events-error" role="alert">
+            <span className="state-icon" aria-hidden="true">!</span>
+            <h2>Events could not be loaded</h2>
+            <p>{error}</p>
+            <button type="button" onClick={() => setRetryCount((count) => count + 1)}>
+              Try again
+            </button>
+          </div>
+        ) : loading ? (
+          <div className="events-grid" aria-label="Loading events" aria-busy="true">
+            {Array.from({ length: 6 }, (_, index) => (
+              <EventCardSkeleton key={index} />
+            ))}
+          </div>
+        ) : eventPage.items.length === 0 ? (
+          <div className="events-state">
+            <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+            <h2>No upcoming events yet</h2>
+            <p>Published events will appear here as soon as they are available.</p>
+          </div>
+        ) : (
+          <>
+            <div className="events-grid">
+              {eventPage.items.map((event, index) => (
+                <EventCard event={event} index={index} key={event.id} />
+              ))}
+            </div>
+
+            <nav className="pagination" aria-label="Event pages">
+              <p>
+                Showing {firstVisibleItem}-{lastVisibleItem} of{' '}
+                {eventPage.total_items}
+              </p>
+              <div className="pagination-controls">
+                <button
+                  type="button"
+                  onClick={() => changePage(page - 1)}
+                  disabled={page <= 1}
+                  aria-label="Previous page"
+                >
+                  ←
+                </button>
+                <span>
+                  Page <strong>{page}</strong> of {eventPage.total_pages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => changePage(page + 1)}
+                  disabled={page >= eventPage.total_pages}
+                  aria-label="Next page"
+                >
+                  →
+                </button>
+              </div>
+            </nav>
+          </>
+        )}
+      </section>
+    </main>
   )
 }
 
@@ -666,13 +1028,16 @@ function AuthVisual({ view }) {
 }
 
 function getInitialView() {
-  return window.location.pathname === '/login' ? 'login' : 'signup'
+  return ['/login', '/events'].includes(window.location.pathname)
+    ? 'login'
+    : 'signup'
 }
 
 function App() {
   const [view, setView] = useState(getInitialView)
   const [loginEmail, setLoginEmail] = useState('')
   const [notice, setNotice] = useState('')
+  const [noticeType, setNoticeType] = useState('success')
   const [loggingOut, setLoggingOut] = useState(false)
   const [session, setSession] = useState(() => {
     const tokens = getStoredTokens()
@@ -689,6 +1054,7 @@ function App() {
     function handlePopState() {
       setView(getInitialView())
       setNotice('')
+      setNoticeType('success')
     }
 
     window.addEventListener('popstate', handlePopState)
@@ -707,7 +1073,13 @@ function App() {
         if (!cancelled) setSession({ status: 'authenticated', tokens })
       } catch {
         clearTokens()
-        if (!cancelled) setSession({ status: 'anonymous', tokens: null })
+        if (!cancelled) {
+          setSession({ status: 'anonymous', tokens: null })
+          setView('login')
+          setNoticeType('error')
+          setNotice('Your session has expired. Please log in again.')
+          window.history.replaceState({}, '', '/login')
+        }
       }
     }
 
@@ -723,19 +1095,32 @@ function App() {
     window.history.pushState({}, '', path)
     setView(nextView)
     setNotice('')
+    setNoticeType('success')
   }
 
   function handleRegistered(user) {
     setLoginEmail(user.email)
     window.history.pushState({}, '', '/login')
     setView('login')
+    setNoticeType('success')
     setNotice(`Account created for ${user.email}. Log in to continue.`)
   }
 
   function handleAuthenticated(tokens) {
     setSession({ status: 'authenticated', tokens })
     setNotice('')
+    window.history.replaceState({}, '', '/events')
   }
+
+  const handleSessionExpired = useCallback((message) => {
+    clearTokens()
+    setSession({ status: 'anonymous', tokens: null })
+    setLoggingOut(false)
+    setView('login')
+    setNoticeType('error')
+    setNotice(message || 'Your session has expired. Please log in again.')
+    window.history.replaceState({}, '', '/login')
+  }, [])
 
   async function handleLogout() {
     setLoggingOut(true)
@@ -751,11 +1136,23 @@ function App() {
       setLoggingOut(false)
       setView('login')
       window.history.replaceState({}, '', '/login')
+      setNoticeType('success')
       setNotice('You have been logged out successfully.')
     }
   }
 
   const isAuthenticated = session.status === 'authenticated'
+
+  if (isAuthenticated) {
+    return (
+      <EventsPage
+        tokens={session.tokens}
+        onLogout={handleLogout}
+        loggingOut={loggingOut}
+        onSessionExpired={handleSessionExpired}
+      />
+    )
+  }
 
   return (
     <main className="auth-page">
@@ -770,12 +1167,6 @@ function App() {
             <span className="spinner" aria-hidden="true" />
             Restoring your session…
           </div>
-        ) : isAuthenticated ? (
-          <AuthenticatedPanel
-            tokens={session.tokens}
-            onLogout={handleLogout}
-            loggingOut={loggingOut}
-          />
         ) : view === 'signup' ? (
           <SignupForm
             onRegistered={handleRegistered}
@@ -785,6 +1176,7 @@ function App() {
           <LoginForm
             initialEmail={loginEmail}
             notice={notice}
+            noticeType={noticeType}
             onAuthenticated={handleAuthenticated}
             onSwitch={(event) => navigate('signup', event)}
           />

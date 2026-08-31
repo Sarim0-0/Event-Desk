@@ -152,7 +152,7 @@ async def complete_past_published_events(
     session: AsyncSession,
     *,
     current_time: datetime,
-) -> int:
+) -> list[UUID]:
     """Conditionally complete only Events that are still published and past."""
 
     statement = (
@@ -169,7 +169,7 @@ async def complete_past_published_events(
         .returning(Event.id)
     )
     completed_event_ids = await session.scalars(statement)
-    return len(completed_event_ids.all())
+    return list(completed_event_ids.all())
 
 
 async def get_category_by_id(

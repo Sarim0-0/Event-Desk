@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from app.api.dependencies import (
+    CurrentUser,
     DatabaseSession,
     PermissionGrant,
     require_any_permission,
@@ -15,7 +16,6 @@ from app.core.permissions import (
     CREATE_EVENTS,
     EDIT_ANY_EVENT,
     EDIT_OWN_EVENT,
-    VIEW_PUBLISHED_EVENTS,
 )
 from app.models.user import User
 from app.schemas.event import (
@@ -45,10 +45,7 @@ router = APIRouter(prefix="/events", tags=["Events"])
 )
 async def list_events_endpoint(
     query: Annotated[EventListQuery, Query()],
-    current_user: Annotated[
-        User,
-        Depends(require_permission(VIEW_PUBLISHED_EVENTS)),
-    ],
+    _current_user: CurrentUser,
     session: DatabaseSession,
 ) -> PaginatedEventsResponse:
     return await list_events(session, query)

@@ -18,6 +18,33 @@ class RegistrationRole(str, Enum):
     ATTENDEE = "attendee"
 
 
+def validate_password_strength(password: SecretStr) -> SecretStr:
+    """Apply the password-strength rules shared by authentication schemas."""
+
+    raw_password = password.get_secret_value()
+    missing_requirements: list[str] = []
+
+    if not any(character.islower() for character in raw_password):
+        missing_requirements.append("lowercase letter")
+    if not any(character.isupper() for character in raw_password):
+        missing_requirements.append("uppercase letter")
+    if not any(character.isdigit() for character in raw_password):
+        missing_requirements.append("number")
+    if not any(
+        not character.isalnum() and not character.isspace()
+        for character in raw_password
+    ):
+        missing_requirements.append("special character")
+
+    if missing_requirements:
+        requirements = ", ".join(missing_requirements)
+        raise ValueError(
+            f"Password must contain at least one {requirements}."
+        )
+
+    return password
+
+
 class SignUpRequest(BaseModel):
     """Information required to create an organizer or attendee account."""
 
@@ -44,29 +71,8 @@ class SignUpRequest(BaseModel):
 
     @field_validator("password")
     @classmethod
-    def validate_password_strength(cls, password: SecretStr) -> SecretStr:
-        raw_password = password.get_secret_value()
-        missing_requirements: list[str] = []
-
-        if not any(character.islower() for character in raw_password):
-            missing_requirements.append("lowercase letter")
-        if not any(character.isupper() for character in raw_password):
-            missing_requirements.append("uppercase letter")
-        if not any(character.isdigit() for character in raw_password):
-            missing_requirements.append("number")
-        if not any(
-            not character.isalnum() and not character.isspace()
-            for character in raw_password
-        ):
-            missing_requirements.append("special character")
-
-        if missing_requirements:
-            requirements = ", ".join(missing_requirements)
-            raise ValueError(
-                f"Password must contain at least one {requirements}."
-            )
-
-        return password
+    def enforce_password_strength(cls, password: SecretStr) -> SecretStr:
+        return validate_password_strength(password)
 
 
 class LoginRequest(BaseModel):
