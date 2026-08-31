@@ -11,6 +11,7 @@ import {
   createEvent,
   getEventAvailabilitySocketUrl,
   listCategories,
+  listDraftEvents,
   listEvents,
   listTags,
   updateEvent,
@@ -23,6 +24,7 @@ import {
   markNotificationRead,
 } from './api/notifications.js'
 import {
+  changeOwnPassword,
   changeUserRole,
   deactivateUser,
   listUsers,
@@ -246,24 +248,30 @@ function PasswordField({
   error,
   showStrength = false,
   autoComplete,
+  id = 'password',
+  name = 'password',
+  label = 'Password',
+  placeholder,
 }) {
   const [passwordVisible, setPasswordVisible] = useState(false)
   const checks = useMemo(() => getPasswordChecks(value), [value])
   const strength = getPasswordStrength(value, checks)
+  const errorId = `${id}-error`
+  const strengthId = `${id}-strength`
   const describedBy = [
-    error ? 'password-error' : null,
-    showStrength ? 'password-strength' : null,
+    error ? errorId : null,
+    showStrength ? strengthId : null,
   ]
     .filter(Boolean)
     .join(' ')
 
   return (
     <div className="form-field">
-      <label htmlFor="password">Password</label>
+      <label htmlFor={id}>{label}</label>
       <div className={`password-input ${error ? 'input-error' : ''}`}>
         <input
-          id="password"
-          name="password"
+          id={id}
+          name={name}
           type={passwordVisible ? 'text' : 'password'}
           value={value}
           onChange={onChange}
@@ -271,9 +279,9 @@ function PasswordField({
           maxLength={128}
           aria-invalid={Boolean(error)}
           aria-describedby={describedBy || undefined}
-          placeholder={
+          placeholder={placeholder || (
             showStrength ? 'Create a strong password' : 'Enter your password'
-          }
+          )}
         />
         <button
           className="visibility-toggle"
@@ -285,10 +293,10 @@ function PasswordField({
           <EyeIcon hidden={passwordVisible} />
         </button>
       </div>
-      <FieldError id="password-error">{error}</FieldError>
+      <FieldError id={errorId}>{error}</FieldError>
 
       {showStrength && (
-        <div className="password-strength" id="password-strength">
+        <div className="password-strength" id={strengthId}>
           <div className="strength-heading">
             <span>Password strength</span>
             <strong className={`strength-${strength.tone}`}>
@@ -1145,6 +1153,41 @@ function Modal({ titleId, onClose, className = '', children }) {
         {children}
       </section>
     </div>
+  )
+}
+
+function ConfirmationModal({
+  title,
+  description,
+  confirmLabel,
+  cancelLabel = 'Cancel',
+  onClose,
+  onConfirm,
+  submitting = false,
+}) {
+  const titleId = 'confirmation-modal-title'
+  const closeWhenIdle = () => {
+    if (!submitting) onClose()
+  }
+
+  return (
+    <Modal titleId={titleId} onClose={closeWhenIdle} className="confirmation-modal">
+      <div className="confirmation-modal-icon" aria-hidden="true">!</div>
+      <div className="modal-heading confirmation-modal-heading">
+        <p className="eyebrow">Please confirm</p>
+        <h1 id={titleId}>{title}</h1>
+        <p>{description}</p>
+      </div>
+      <div className="modal-actions confirmation-modal-actions">
+        <button className="secondary-button" type="button" onClick={closeWhenIdle} disabled={submitting}>
+          {cancelLabel}
+        </button>
+        <button className="destructive-button" type="button" onClick={onConfirm} disabled={submitting}>
+          {submitting && <span className="spinner" aria-hidden="true" />}
+          {submitting ? 'Cancelling…' : confirmLabel}
+        </button>
+      </div>
+    </Modal>
   )
 }
 
@@ -2036,6 +2079,7 @@ function EventsPage({
   role,
 }) {
   const [page, setPage] = useState(1)
+  const [eventView, setEventView] = useState('published')
   const [eventPage, setEventPage] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [editingEvent, setEditingEvent] = useState(null)
@@ -2046,6 +2090,7 @@ function EventsPage({
   const [retryCount, setRetryCount] = useState(0)
   const [actionNotice, setActionNotice] = useState('')
   const tokensRef = useRef(tokens)
+  const canViewDrafts = ['organizer', 'admin'].includes(role)
   const selectedTagKey = selectedTagIds.join('|')
   const categoryNames = useMemo(
     () => new Map(metadata.categories.map((item) => [item.id, item.name])),
@@ -2101,7 +2146,8 @@ function EventsPage({
       setError(null)
 
       try {
-        const result = await listEvents({
+        const loadEvents = eventView === 'drafts' ? listDraftEvents : listEvents
+        const result = await loadEvents({
           tokens: tokensRef.current,
           page,
           categoryId: selectedCategoryId,
@@ -2142,6 +2188,7 @@ function EventsPage({
   }, [
     onSessionExpired,
     onTokensChanged,
+    eventView,
     page,
     retryCount,
     selectedCategoryId,
@@ -2249,23 +2296,69 @@ function EventsPage({
     setSelectedEvent(null)
   }
 
+  function changeEventView(nextView) {
+    if (nextView === eventView || (nextView === 'drafts' && !canViewDrafts)) {
+      return
+    }
+    setEventView(nextView)
+    setPage(1)
+    setSelectedEvent(null)
+    setEditingEvent(null)
+    setActionNotice('')
+  }
+
   const filtersActive = Boolean(selectedCategoryId || selectedTagIds.length)
 
   return (
     <section className="events-content" aria-labelledby="events-title">
         <div className="events-intro">
           <div>
-            <p className="eyebrow">Upcoming experiences</p>
-            <h1 id="events-title">Explore events</h1>
-            <p>Find something worth showing up for.</p>
+            <p className="eyebrow">
+              {eventView === 'drafts' ? 'Event management' : 'Upcoming experiences'}
+            </p>
+            <h1 id="events-title">
+              {eventView === 'drafts' ? 'Draft events' : 'Explore events'}
+            </h1>
+            <p>
+              {eventView === 'drafts'
+                ? role === 'admin'
+                  ? 'Review unpublished events from every organizer.'
+                  : 'Finish and publish the events you are preparing.'
+                : 'Find something worth showing up for.'}
+            </p>
           </div>
           {!loading && eventPage && (
             <p className="events-count">
               {eventPage.total_items}{' '}
-              {eventPage.total_items === 1 ? 'event' : 'events'} available
+              {eventView === 'drafts'
+                ? eventPage.total_items === 1 ? 'draft event' : 'draft events'
+                : `${eventPage.total_items === 1 ? 'event' : 'events'} available`}
             </p>
           )}
         </div>
+
+        {canViewDrafts && (
+          <div className="event-view-tabs" role="tablist" aria-label="Event views">
+            <button
+              className={eventView === 'published' ? 'event-view-tab-active' : ''}
+              type="button"
+              role="tab"
+              aria-selected={eventView === 'published'}
+              onClick={() => changeEventView('published')}
+            >
+              Published events
+            </button>
+            <button
+              className={eventView === 'drafts' ? 'event-view-tab-active' : ''}
+              type="button"
+              role="tab"
+              aria-selected={eventView === 'drafts'}
+              onClick={() => changeEventView('drafts')}
+            >
+              Draft events
+            </button>
+          </div>
+        )}
 
         <div className="event-filters" aria-label="Filter events">
           <div className="event-category-filter">
@@ -2334,8 +2427,22 @@ function EventsPage({
         ) : eventPage.items.length === 0 ? (
           <div className="events-state">
             <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
-            <h2>{filtersActive ? 'No events match these filters' : 'No upcoming events yet'}</h2>
-            <p>{filtersActive ? 'Try removing a category or tag filter.' : 'Published events will appear here as soon as they are available.'}</p>
+            <h2>
+              {filtersActive
+                ? 'No events match these filters'
+                : eventView === 'drafts'
+                  ? 'No draft events'
+                  : 'No upcoming events yet'}
+            </h2>
+            <p>
+              {filtersActive
+                ? 'Try removing a category or tag filter.'
+                : eventView === 'drafts'
+                  ? role === 'admin'
+                    ? 'There are no unpublished events to review.'
+                    : 'Events saved as drafts will appear here.'
+                  : 'Published events will appear here as soon as they are available.'}
+            </p>
           </div>
         ) : (
           <>
@@ -2449,6 +2556,13 @@ function validateBookingPage(payload) {
   return (
     payload &&
     Array.isArray(payload.items) &&
+    payload.items.every(
+      (booking) =>
+        typeof booking?.event_title === 'string' &&
+        ['draft', 'published', 'cancelled', 'completed'].includes(
+          booking.event_status,
+        ),
+    ) &&
     payload.page_size === 5 &&
     Number.isInteger(payload.page) &&
     Number.isInteger(payload.total_items) &&
@@ -2463,6 +2577,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
   const [cancellingBookingId, setCancellingBookingId] = useState(null)
+  const [bookingToCancel, setBookingToCancel] = useState(null)
   const [actionError, setActionError] = useState(null)
   const tokensRef = useRef(tokens)
 
@@ -2516,13 +2631,16 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  async function handleCancelBooking(booking) {
+  function requestBookingCancellation(booking) {
     if (booking.status === 'cancelled' || cancellingBookingId) return
 
-    const confirmed = window.confirm(
-      'Cancel this booking? Your tickets will be returned to the event.',
-    )
-    if (!confirmed) return
+    setActionError(null)
+    setBookingToCancel(booking)
+  }
+
+  async function handleCancelBooking() {
+    const booking = bookingToCancel
+    if (!booking || booking.status === 'cancelled' || cancellingBookingId) return
 
     setCancellingBookingId(booking.id)
     setActionError(null)
@@ -2545,6 +2663,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
             }
           : current,
       )
+      setBookingToCancel(null)
     } catch (requestError) {
       if (requestError instanceof SessionExpiredError) {
         onSessionExpired(requestError.message)
@@ -2599,12 +2718,26 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                 <div className="booking-icon"><AppIcon type="bookings" /></div>
                 <div className="booking-main">
                   <div className="booking-heading">
-                    <h2 title={booking.event_id}>Event {shortId(booking.event_id)}</h2>
+                    <h2 title={booking.event_id}>
+                      {booking.event_title || `Event ${shortId(booking.event_id)}`}
+                    </h2>
                     <span className={`status-badge status-${booking.status}`}>
-                      {booking.status}
+                      {booking.status === 'confirmed'
+                        ? 'Booking confirmed'
+                        : 'Booking cancelled'}
                     </span>
+                    {booking.event_status === 'draft' && (
+                      <span className="event-state-badge event-state-draft">
+                        Event is draft
+                      </span>
+                    )}
                   </div>
                   <p>Booked {formatDateTime(booking.booked_at)}</p>
+                  {booking.event_status === 'draft' && (
+                    <p className="booking-event-notice">
+                      The organizer has moved this event back to draft.
+                    </p>
+                  )}
                   <small title={booking.id}>Booking #{shortId(booking.id)}</small>
                 </div>
                 <div className="booking-quantity">
@@ -2618,7 +2751,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                     <button
                       className="destructive-button"
                       type="button"
-                      onClick={() => handleCancelBooking(booking)}
+                      onClick={() => requestBookingCancellation(booking)}
                       disabled={Boolean(cancellingBookingId)}
                     >
                       {cancellingBookingId === booking.id
@@ -2642,6 +2775,17 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
             label="Booking"
           />
         </>
+      )}
+      {bookingToCancel && (
+        <ConfirmationModal
+          title="Cancel this booking?"
+          description={`This will cancel your reservation for ${bookingToCancel.quantity} ticket${bookingToCancel.quantity === 1 ? '' : 's'}. The ticket${bookingToCancel.quantity === 1 ? '' : 's'} will be returned to the event.`}
+          confirmLabel="Cancel booking"
+          cancelLabel="Keep booking"
+          onClose={() => setBookingToCancel(null)}
+          onConfirm={handleCancelBooking}
+          submitting={cancellingBookingId === bookingToCancel.id}
+        />
       )}
     </section>
   )
@@ -2713,6 +2857,7 @@ function ProfileModal({
   role,
   onClose,
   onUpdated,
+  onPasswordChanged,
   onSessionExpired,
   onTokensChanged,
 }) {
@@ -2724,6 +2869,14 @@ function ProfileModal({
   const [fieldErrors, setFieldErrors] = useState({})
   const [formError, setFormError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: '',
+    new_password: '',
+    confirm_password: '',
+  })
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState({})
+  const [passwordFormError, setPasswordFormError] = useState(null)
+  const [changingPassword, setChangingPassword] = useState(false)
   const isAdmin = role === 'admin'
 
   function updateField(event) {
@@ -2731,6 +2884,16 @@ function ProfileModal({
     setForm((current) => ({ ...current, [name]: value }))
     setFieldErrors((current) => ({ ...current, [name]: undefined }))
     setFormError(null)
+  }
+
+  function updatePasswordField(event) {
+    const { name, value } = event.target
+    setPasswordForm((current) => ({ ...current, [name]: value }))
+    setPasswordFieldErrors((current) => ({
+      ...current,
+      [name]: undefined,
+    }))
+    setPasswordFormError(null)
   }
 
   async function handleSubmit(event) {
@@ -2799,6 +2962,66 @@ function ProfileModal({
     }
   }
 
+  async function handlePasswordSubmit(event) {
+    event.preventDefault()
+    const errors = {}
+    const newPasswordLength = characterLength(passwordForm.new_password)
+    const passwordChecks = getPasswordChecks(passwordForm.new_password)
+
+    if (!passwordForm.current_password) {
+      errors.current_password = 'Enter your current password.'
+    } else if (characterLength(passwordForm.current_password) > 128) {
+      errors.current_password = 'Password must contain at most 128 characters.'
+    }
+    if (newPasswordLength < 8) {
+      errors.new_password = 'New password must contain at least 8 characters.'
+    } else if (newPasswordLength > 128) {
+      errors.new_password = 'New password must contain at most 128 characters.'
+    } else if (passwordChecks.some((check) => !check.met)) {
+      const missingRequirements = passwordChecks
+        .filter((check) => !check.met && check.key !== 'length')
+        .map((check) => check.label.toLowerCase().replace(/^one /, ''))
+      errors.new_password = `Password must contain at least one ${missingRequirements.join(', ')}.`
+    } else if (passwordForm.new_password === passwordForm.current_password) {
+      errors.new_password = 'The new password must differ from the current password.'
+    }
+    if (passwordForm.confirm_password !== passwordForm.new_password) {
+      errors.confirm_password = 'Passwords do not match.'
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setPasswordFieldErrors(errors)
+      setPasswordFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setChangingPassword(true)
+    setPasswordFieldErrors({})
+    setPasswordFormError(null)
+    try {
+      await changeOwnPassword({
+        tokens,
+        currentPassword: passwordForm.current_password,
+        newPassword: passwordForm.new_password,
+      })
+      onPasswordChanged()
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['current_password', 'new_password'],
+        'We could not change your password. Please try again.',
+      )
+      setPasswordFieldErrors(apiErrors.fieldErrors)
+      setPasswordFormError(apiErrors.message)
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
   return (
     <Modal titleId="profile-title" onClose={onClose} className="form-modal profile-modal">
       <div className="modal-heading">
@@ -2843,6 +3066,49 @@ function ProfileModal({
           </button>
         </div>
       </form>
+      <div className="profile-section-divider" />
+      <div className="profile-password-heading">
+        <h2>Change password</h2>
+        <p>You will be asked to log in again after changing your password.</p>
+      </div>
+      <Alert>{passwordFormError}</Alert>
+      <form className="profile-form profile-password-form" onSubmit={handlePasswordSubmit} noValidate>
+        <PasswordField
+          id="profile-current-password"
+          name="current_password"
+          label="Current password"
+          value={passwordForm.current_password}
+          onChange={updatePasswordField}
+          error={passwordFieldErrors.current_password}
+          autoComplete="current-password"
+        />
+        <PasswordField
+          id="profile-new-password"
+          name="new_password"
+          label="New password"
+          value={passwordForm.new_password}
+          onChange={updatePasswordField}
+          error={passwordFieldErrors.new_password}
+          showStrength
+          autoComplete="new-password"
+        />
+        <PasswordField
+          id="profile-confirm-password"
+          name="confirm_password"
+          label="Confirm new password"
+          value={passwordForm.confirm_password}
+          onChange={updatePasswordField}
+          error={passwordFieldErrors.confirm_password}
+          autoComplete="new-password"
+          placeholder="Enter the new password again"
+        />
+        <div className="modal-actions profile-form-actions">
+          <button className="primary-button" type="submit" disabled={changingPassword || submitting}>
+            {changingPassword && <span className="spinner" aria-hidden="true" />}
+            {changingPassword ? 'Changing password…' : 'Change password'}
+          </button>
+        </div>
+      </form>
     </Modal>
   )
 }
@@ -2863,6 +3129,7 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
   })
   const [actionLoading, setActionLoading] = useState(null)
   const [actionError, setActionError] = useState(null)
+  const [userToDeactivate, setUserToDeactivate] = useState(null)
   const tokensRef = useRef(tokens)
 
   useEffect(() => {
@@ -2908,13 +3175,16 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
     }
   }
 
-  async function handleDeactivate(user) {
+  function requestDeactivation(user) {
     if (actionLoading || user.role === 'admin' || !user.is_active) return
 
-    const confirmed = window.confirm(
-      `Deactivate ${user.name}? They will no longer be able to sign in.`,
-    )
-    if (!confirmed) return
+    setActionError(null)
+    setUserToDeactivate(user)
+  }
+
+  async function handleDeactivate() {
+    const user = userToDeactivate
+    if (!user || actionLoading || user.role === 'admin' || !user.is_active) return
 
     setActionLoading(`status-${user.id}`)
     setActionError(null)
@@ -2928,6 +3198,7 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
         onTokensChanged(result.tokens)
       }
       applyUserUpdate(result.data)
+      setUserToDeactivate(null)
     } catch (requestError) {
       if (requestError instanceof SessionExpiredError) {
         onSessionExpired(requestError.message)
@@ -2998,7 +3269,7 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
                       <button
                         className="deactivate-user-button"
                         type="button"
-                        onClick={() => handleDeactivate(user)}
+                        onClick={() => requestDeactivation(user)}
                         disabled={Boolean(actionLoading)}
                       >
                         {actionLoading === `status-${user.id}`
@@ -3017,6 +3288,17 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
             </tbody>
           </table>
         </div>
+      )}
+      {userToDeactivate && (
+        <ConfirmationModal
+          title={`Deactivate ${userToDeactivate.name}?`}
+          description="This user will immediately lose access, and their active sessions will be revoked. The current backend does not provide a way to reactivate the account."
+          confirmLabel="Deactivate user"
+          cancelLabel="Keep active"
+          onClose={() => setUserToDeactivate(null)}
+          onConfirm={handleDeactivate}
+          submitting={actionLoading === `status-${userToDeactivate.id}`}
+        />
       )}
     </section>
   )
@@ -3650,6 +3932,23 @@ function App() {
     window.history.replaceState({}, '', '/login')
   }, [])
 
+  const handlePasswordChanged = useCallback(() => {
+    clearTokens()
+    unreadNotificationIdsRef.current.clear()
+    seenNotificationIdsRef.current.clear()
+    notificationBootstrapRef.current = true
+    setUnreadNotificationsCount(0)
+    setLiveToast(null)
+    setSession({ status: 'anonymous', tokens: null })
+    setCreateEventOpen(false)
+    setProfileOpen(false)
+    setCurrentUser(null)
+    setView('login')
+    setNoticeType('success')
+    setNotice('Your password was changed. Log in again with your new password.')
+    window.history.replaceState({}, '', '/login')
+  }, [])
+
   async function handleLogout() {
     setLoggingOut(true)
 
@@ -3793,7 +4092,7 @@ function App() {
           metadata={eventMetadata}
           currentUserId={currentUserId}
           role={role}
-          key={eventReloadVersion}
+          key={`${eventReloadVersion}-${role}`}
         />
       ),
       bookings: <BookingsPage {...pageProps} />,
@@ -3869,6 +4168,7 @@ function App() {
             role={role}
             onClose={() => setProfileOpen(false)}
             onUpdated={handleProfileUpdated}
+            onPasswordChanged={handlePasswordChanged}
             onSessionExpired={handleSessionExpired}
             onTokensChanged={handleTokensChanged}
           />

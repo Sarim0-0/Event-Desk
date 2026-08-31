@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.booking import Booking
 from app.models.enums import BookingStatus
@@ -30,6 +31,7 @@ async def list_bookings_by_user(
 ) -> list[Booking]:
     statement = (
         select(Booking)
+        .options(selectinload(Booking.event))
         .where(Booking.user_id == user_id)
         .order_by(Booking.booked_at.desc(), Booking.id.desc())
         .offset((page - 1) * _BOOKINGS_PER_PAGE)

@@ -10,7 +10,12 @@ export class SessionExpiredError extends Error {
 
 export async function authenticatedRequest(
   path,
-  { tokens, method = 'GET', body } = {},
+  {
+    tokens,
+    method = 'GET',
+    body,
+    shouldRefreshUnauthorized = () => true,
+  } = {},
 ) {
   try {
     const data = await request(path, {
@@ -20,7 +25,13 @@ export async function authenticatedRequest(
     })
     return { data, tokens }
   } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 401) throw error
+    if (
+      !(error instanceof ApiError) ||
+      error.status !== 401 ||
+      !shouldRefreshUnauthorized(error)
+    ) {
+      throw error
+    }
   }
 
   let refreshed
@@ -49,6 +60,7 @@ export async function authenticatedRequest(
     return { data, tokens: nextTokens }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
+      if (!shouldRefreshUnauthorized(error)) throw error
       throw new SessionExpiredError()
     }
     throw error

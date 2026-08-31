@@ -12,6 +12,19 @@ export function updateOwnProfile({ tokens, profile }) {
   })
 }
 
+export function changeOwnPassword({ tokens, currentPassword, newPassword }) {
+  return authenticatedRequest('/users/me/password', {
+    tokens,
+    method: 'PATCH',
+    body: {
+      current_password: currentPassword,
+      new_password: newPassword,
+    },
+    shouldRefreshUnauthorized: (error) =>
+      error.payload?.detail !== 'The current password is incorrect.',
+  })
+}
+
 export function changeUserRole({ tokens, userId, role }) {
   return authenticatedRequest(`/users/${userId}/role`, {
     tokens,

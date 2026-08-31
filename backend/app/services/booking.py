@@ -12,6 +12,8 @@ from app.models.enums import (
     EventStatus,
 )
 from app.models.user import User
+from app.models.booking import Booking
+from app.models.event import Event
 from app.repositories import booking as booking_repository
 from app.schemas.booking import (
     BOOKINGS_PER_PAGE,
@@ -42,7 +44,10 @@ async def list_own_bookings(
     total_pages = (total_items + BOOKINGS_PER_PAGE - 1) // BOOKINGS_PER_PAGE
 
     return PaginatedBookingsResponse(
-        items=[BookingResponse.model_validate(booking) for booking in bookings],
+        items=[
+            _booking_response(booking, booking.event)
+            for booking in bookings
+        ],
         page=query.page,
         total_items=total_items,
         total_pages=total_pages,
@@ -106,7 +111,7 @@ async def create_booking(
             entity_id=booking.id,
         )
 
-        response = BookingResponse.model_validate(booking)
+        response = _booking_response(booking, event)
 
         await session.commit()
         return response
@@ -189,7 +194,7 @@ async def cancel_booking(
             entity_id=booking.id,
         )
 
-        response = BookingResponse.model_validate(booking)
+        response = _booking_response(booking, event)
 
         await session.commit()
         return response
@@ -207,4 +212,20 @@ def _get_constraint_name(error: IntegrityError) -> str | None:
         getattr(original_error, "constraint_name", None)
         or getattr(cause, "constraint_name", None)
         or getattr(diagnostics, "constraint_name", None)
+    )
+
+
+def _booking_response(booking: Booking, event: Event) -> BookingResponse:
+    return BookingResponse(
+        id=booking.id,
+        user_id=booking.user_id,
+        event_id=booking.event_id,
+        event_title=event.title,
+        event_status=event.status,
+        quantity=booking.quantity,
+        status=booking.status,
+        booked_at=booking.booked_at,
+        cancelled_at=booking.cancelled_at,
+        created_at=booking.created_at,
+        updated_at=booking.updated_at,
     )

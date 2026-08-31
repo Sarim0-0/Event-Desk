@@ -31,6 +31,7 @@ from app.services.event import (
     cancel_event,
     create_event,
     list_categories,
+    list_draft_events,
     list_events,
     list_tags,
     update_event,
@@ -84,6 +85,34 @@ async def list_tags_endpoint(
     session: DatabaseSession,
 ) -> list[TagResponse]:
     return await list_tags(session)
+
+
+@router.get(
+    "/drafts",
+    response_model=PaginatedEventsResponse,
+    status_code=status.HTTP_200_OK,
+    name="list_draft_events",
+)
+async def list_draft_events_endpoint(
+    query: Annotated[EventListQuery, Query()],
+    permission_grant: Annotated[
+        PermissionGrant,
+        Depends(
+            require_any_permission(
+                EDIT_OWN_EVENT,
+                EDIT_ANY_EVENT,
+            )
+        ),
+    ],
+    session: DatabaseSession,
+) -> PaginatedEventsResponse:
+    return await list_draft_events(
+        session,
+        permission_grant.user,
+        query,
+        can_view_own=permission_grant.allows(EDIT_OWN_EVENT),
+        can_view_any=permission_grant.allows(EDIT_ANY_EVENT),
+    )
 
 
 @router.post(

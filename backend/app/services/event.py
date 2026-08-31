@@ -70,6 +70,63 @@ async def list_events(
     )
 
 
+async def list_draft_events(
+    session: AsyncSession,
+    current_user: User,
+    query: EventListQuery,
+    *,
+    can_view_own: bool,
+    can_view_any: bool,
+) -> PaginatedEventsResponse:
+    """Return drafts visible through the caller's Event permissions."""
+
+    if not can_view_any and not can_view_own:
+        raise ForbiddenError(
+            "You do not have permission to view draft Events."
+        )
+
+    organizer_id = None if can_view_any else current_user.id
+    total_items = await event_repository.count_draft_events(
+        session,
+        organizer_id=organizer_id,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    events = await event_repository.list_draft_events(
+        session,
+        page=query.page,
+        organizer_id=organizer_id,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    total_pages = (total_items + EVENTS_PER_PAGE - 1) // EVENTS_PER_PAGE
+
+    return PaginatedEventsResponse(
+        items=[
+            EventResponse(
+                id=event.id,
+                organizer_id=event.organizer_id,
+                title=event.title,
+                description=event.description,
+                venue=event.venue,
+                event_datetime=event.event_datetime,
+                ticket_price=event.ticket_price,
+                total_tickets=event.total_tickets,
+                tickets_available=event.tickets_available,
+                category_id=event.category_id,
+                tag_ids=[tag.id for tag in event.tags],
+                status=event.status,
+                created_at=event.created_at,
+                updated_at=event.updated_at,
+            )
+            for event in events
+        ],
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
+
+
 async def list_categories(
     session: AsyncSession,
 ) -> list[CategoryResponse]:

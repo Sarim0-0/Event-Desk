@@ -48,6 +48,29 @@ def _visible_event_conditions(
     return tuple(conditions)
 
 
+def _draft_event_conditions(
+    *,
+    organizer_id: UUID | None,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> tuple[ColumnElement[bool], ...]:
+    conditions: list[ColumnElement[bool]] = [
+        Event.status == EventStatus.DRAFT,
+        Event.deleted_at.is_(None),
+    ]
+
+    if organizer_id is not None:
+        conditions.append(Event.organizer_id == organizer_id)
+    if category_id is not None:
+        conditions.append(Event.category_id == category_id)
+
+    conditions.extend(
+        Event.event_tags.any(EventTag.tag_id == tag_id)
+        for tag_id in tag_ids
+    )
+    return tuple(conditions)
+
+
 async def count_visible_events(
     session: AsyncSession,
     *,
@@ -78,6 +101,52 @@ async def list_visible_events(
         )
         .where(
             *_visible_event_conditions(
+                category_id=category_id,
+                tag_ids=tag_ids,
+            )
+        )
+        .order_by(Event.event_datetime, Event.id)
+        .offset((page - 1) * _EVENTS_PER_PAGE)
+        .limit(_EVENTS_PER_PAGE)
+    )
+    events = await session.scalars(statement)
+    return list(events.all())
+
+
+async def count_draft_events(
+    session: AsyncSession,
+    *,
+    organizer_id: UUID | None,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> int:
+    statement = select(func.count(Event.id)).where(
+        *_draft_event_conditions(
+            organizer_id=organizer_id,
+            category_id=category_id,
+            tag_ids=tag_ids,
+        )
+    )
+    return int(await session.scalar(statement) or 0)
+
+
+async def list_draft_events(
+    session: AsyncSession,
+    *,
+    page: int,
+    organizer_id: UUID | None,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> list[Event]:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.tags),
+        )
+        .where(
+            *_draft_event_conditions(
+                organizer_id=organizer_id,
                 category_id=category_id,
                 tag_ids=tag_ids,
             )

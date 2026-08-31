@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import BookingStatus
+from app.models.enums import BookingStatus, EventStatus
 
 
 BOOKINGS_PER_PAGE = 5
@@ -27,6 +27,8 @@ class BookingResponse(BaseModel):
     id: UUID
     user_id: UUID
     event_id: UUID
+    event_title: str
+    event_status: EventStatus
     quantity: int
     status: BookingStatus
     booked_at: datetime

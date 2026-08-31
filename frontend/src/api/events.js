@@ -21,6 +21,19 @@ export function listEvents({
   return authenticatedRequest(`/events?${query}`, { tokens })
 }
 
+export function listDraftEvents({
+  tokens,
+  page = 1,
+  categoryId = '',
+  tagIds = [],
+}) {
+  const query = new URLSearchParams({ page: String(page) })
+  if (categoryId) query.set('category_id', categoryId)
+  tagIds.forEach((tagId) => query.append('tag_ids', tagId))
+
+  return authenticatedRequest(`/events/drafts?${query}`, { tokens })
+}
+
 export function createEvent({ tokens, event }) {
   return authenticatedRequest('/events', {
     tokens,
