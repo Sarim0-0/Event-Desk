@@ -1,7 +1,7 @@
 import { authenticatedRequest } from './authenticated.js'
 
-export function listEvents({ tokens, page = 1 }) {
+export function listBookings({ tokens, page = 1 }) {
   const query = new URLSearchParams({ page: String(page) })
 
-  return authenticatedRequest(`/events?${query}`, { tokens })
+  return authenticatedRequest(`/bookings?${query}`, { tokens })
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   logIn,
@@ -7,6 +7,10 @@ import {
   signUp,
 } from './api/auth.js'
 import { listEvents } from './api/events.js'
+import { listBookings } from './api/bookings.js'
+import { listUsers } from './api/users.js'
+import { listAuditLogs } from './api/auditLogs.js'
+import { SessionExpiredError } from './api/authenticated.js'
 import {
   clearTokens,
   getAccessTokenClaims,
@@ -766,127 +770,86 @@ function EventCardSkeleton() {
   )
 }
 
-function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
-  const [page, setPage] = useState(1)
-  const [eventPage, setEventPage] = useState(null)
-  const [activeTokens, setActiveTokens] = useState(tokens)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [retryCount, setRetryCount] = useState(0)
-  const claims = getAccessTokenClaims(activeTokens.access_token)
-  const role = typeof claims?.role === 'string' ? claims.role : 'user'
-  const profileInitial = role.charAt(0).toUpperCase()
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadPage() {
-      setLoading(true)
-      setError(null)
-
-      try {
-        const response = await listEvents({
-          accessToken: activeTokens.access_token,
-          page,
-        })
-
-        if (!validateEventPage(response)) {
-          throw new UnexpectedEventResponseError(
-            'Invalid paginated event response.',
-          )
-        }
-
-        if (!cancelled) {
-          setEventPage(response)
-          setLoading(false)
-        }
-      } catch (requestError) {
-        if (cancelled) return
-
-        if (requestError instanceof ApiError && requestError.status === 401) {
-          try {
-            const refreshed = await refreshAccessToken(
-              activeTokens.refresh_token,
-            )
-            const nextTokens = updateAccessToken(refreshed.access_token)
-
-            if (!nextTokens) {
-              onSessionExpired('Your session has expired. Please log in again.')
-              return
-            }
-
-            if (!cancelled) setActiveTokens(nextTokens)
-          } catch (refreshError) {
-            if (cancelled) return
-
-            if (
-              refreshError instanceof ApiError &&
-              [401, 403].includes(refreshError.status)
-            ) {
-              onSessionExpired(
-                typeof refreshError.payload?.detail === 'string'
-                  ? refreshError.payload.detail
-                  : 'Your session has expired. Please log in again.',
-              )
-              return
-            }
-
-            setError(getEventErrorMessage(refreshError))
-            setLoading(false)
-          }
-          return
-        }
-
-        if (requestError instanceof ApiError && requestError.status === 403) {
-          onSessionExpired(
-            typeof requestError.payload?.detail === 'string'
-              ? requestError.payload.detail
-              : 'Your account cannot access events.',
-          )
-          return
-        }
-
-        setError(getEventErrorMessage(requestError))
-        setLoading(false)
-      }
-    }
-
-    loadPage()
-    return () => {
-      cancelled = true
-    }
-  }, [activeTokens, onSessionExpired, page, retryCount])
-
-  const firstVisibleItem = eventPage?.total_items
-    ? (eventPage.page - 1) * eventPage.page_size + 1
-    : 0
-  const lastVisibleItem = eventPage?.total_items
-    ? Math.min(
-        eventPage.page * eventPage.page_size,
-        eventPage.total_items,
-      )
-    : 0
-
-  function changePage(nextPage) {
-    if (
-      loading ||
-      !eventPage ||
-      nextPage < 1 ||
-      nextPage > eventPage.total_pages ||
-      nextPage === page
-    ) {
-      return
-    }
-
-    setPage(nextPage)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+function AppIcon({ type }) {
+  const paths = {
+    events: (
+      <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>
+    ),
+    bookings: (
+      <><path d="M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 010 4v2a2 2 0 01-2 2H5a2 2 0 00-2-2v-2a2 2 0 010-4V8z" /><path d="M13 7v2M13 11v2M13 15v2" /></>
+    ),
+    users: (
+      <><circle cx="9" cy="8" r="3" /><path d="M3.5 20v-2a5.5 5.5 0 0111 0v2M16 5.5a3 3 0 010 5.5M17 14a5 5 0 013.5 4.8V20" /></>
+    ),
+    logs: (
+      <><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7" /></>
+    ),
+    bell: (
+      <><path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>
+    ),
+    plus: <path d="M12 5v14M5 12h14" />,
   }
 
+  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[type]}</svg>
+}
+
+function ApplicationShell({
+  role,
+  currentPage,
+  onNavigate,
+  onLogout,
+  loggingOut,
+  children,
+}) {
+  const profileInitial = role.charAt(0).toUpperCase()
+  const navigation = [
+    { key: 'events', label: 'Events' },
+    { key: 'bookings', label: 'Bookings' },
+    ...(role === 'admin'
+      ? [
+          { key: 'users', label: 'Users' },
+          { key: 'logs', label: 'Logs' },
+        ]
+      : []),
+  ]
+
   return (
-    <main className="events-page">
-      <header className="events-header">
+    <main className="app-page">
+      <header className="app-header">
         <BrandMark />
-        <div className="events-header-actions">
+        <nav className="app-nav" aria-label="Primary navigation">
+          {navigation.map((item) => (
+            <a
+              className={currentPage === item.key ? 'app-nav-active' : ''}
+              href={`/${item.key}`}
+              onClick={(event) => onNavigate(item.key, event)}
+              aria-current={currentPage === item.key ? 'page' : undefined}
+              key={item.key}
+            >
+              <AppIcon type={item.key} />
+              {item.label}
+            </a>
+          ))}
+        </nav>
+        <div className="app-header-actions">
+          {['organizer', 'admin'].includes(role) && (
+            <button
+              className="create-event-button"
+              type="button"
+              title="Event creation coming soon"
+            >
+              <AppIcon type="plus" />
+              Create event
+            </button>
+          )}
+          <button
+            className="header-icon-button"
+            type="button"
+            aria-label="Notifications. Notifications panel coming soon."
+            title="Notifications coming soon"
+          >
+            <AppIcon type="bell" />
+          </button>
           <button
             className="logout-button"
             type="button"
@@ -905,8 +868,142 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
           </button>
         </div>
       </header>
+      {children}
+    </main>
+  )
+}
 
-      <section className="events-content" aria-labelledby="events-title">
+function Pagination({ pageData, loading, onChange, label }) {
+  const first = pageData.total_items
+    ? (pageData.page - 1) * pageData.page_size + 1
+    : 0
+  const last = pageData.total_items
+    ? Math.min(pageData.page * pageData.page_size, pageData.total_items)
+    : 0
+
+  return (
+    <nav className="pagination" aria-label={`${label} pages`}>
+      <p>Showing {first}-{last} of {pageData.total_items}</p>
+      <div className="pagination-controls">
+        <button
+          type="button"
+          onClick={() => onChange(pageData.page - 1)}
+          disabled={loading || pageData.page <= 1}
+          aria-label="Previous page"
+        >
+          ←
+        </button>
+        <span>Page <strong>{pageData.page}</strong> of {pageData.total_pages}</span>
+        <button
+          type="button"
+          onClick={() => onChange(pageData.page + 1)}
+          disabled={loading || pageData.page >= pageData.total_pages}
+          aria-label="Next page"
+        >
+          →
+        </button>
+      </div>
+    </nav>
+  )
+}
+
+function ResourceError({ title, message, onRetry }) {
+  return (
+    <div className="events-state events-error" role="alert">
+      <span className="state-icon" aria-hidden="true">!</span>
+      <h2>{title}</h2>
+      <p>{message}</p>
+      <button type="button" onClick={onRetry}>Try again</button>
+    </div>
+  )
+}
+
+function getResourceErrorMessage(error, resource) {
+  if (error instanceof ApiError && typeof error.payload?.detail === 'string') {
+    return error.payload.detail
+  }
+  return `We could not load ${resource}. Check your connection and try again.`
+}
+
+function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
+  const [page, setPage] = useState(1)
+  const [eventPage, setEventPage] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPage() {
+      setLoading(true)
+      setError(null)
+
+      try {
+        const result = await listEvents({ tokens: tokensRef.current, page })
+        const response = result.data
+
+        if (!validateEventPage(response)) {
+          throw new UnexpectedEventResponseError(
+            'Invalid paginated event response.',
+          )
+        }
+
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setEventPage(response)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getEventErrorMessage(requestError))
+        setLoading(false)
+      }
+    }
+
+    loadPage()
+    return () => {
+      cancelled = true
+    }
+  }, [onSessionExpired, onTokensChanged, page, retryCount])
+
+  const firstVisibleItem = eventPage?.total_items
+    ? (eventPage.page - 1) * eventPage.page_size + 1
+    : 0
+  const lastVisibleItem = eventPage?.total_items
+    ? Math.min(eventPage.page * eventPage.page_size, eventPage.total_items)
+    : 0
+
+  function changePage(nextPage) {
+    if (
+      loading ||
+      !eventPage ||
+      nextPage < 1 ||
+      nextPage > eventPage.total_pages ||
+      nextPage === page
+    ) {
+      return
+    }
+
+    setPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  return (
+    <section className="events-content" aria-labelledby="events-title">
         <div className="events-intro">
           <div>
             <p className="eyebrow">Upcoming experiences</p>
@@ -979,8 +1076,347 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
             </nav>
           </>
         )}
-      </section>
-    </main>
+    </section>
+  )
+}
+
+function formatDateTime(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Date unavailable'
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+function shortId(value) {
+  return typeof value === 'string' ? value.slice(0, 8) : 'Unknown'
+}
+
+function validateBookingPage(payload) {
+  return (
+    payload &&
+    Array.isArray(payload.items) &&
+    payload.page_size === 5 &&
+    Number.isInteger(payload.page) &&
+    Number.isInteger(payload.total_items) &&
+    Number.isInteger(payload.total_pages)
+  )
+}
+
+function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
+  const [page, setPage] = useState(1)
+  const [bookingPage, setBookingPage] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadBookings() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listBookings({ tokens: tokensRef.current, page })
+        if (!validateBookingPage(result.data)) {
+          throw new Error('Invalid paginated booking response.')
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setBookingPage(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, 'your bookings'))
+        setLoading(false)
+      }
+    }
+
+    loadBookings()
+    return () => { cancelled = true }
+  }, [onSessionExpired, onTokensChanged, page, retryCount])
+
+  function changePage(nextPage) {
+    if (
+      loading ||
+      !bookingPage ||
+      nextPage < 1 ||
+      nextPage > bookingPage.total_pages
+    ) return
+
+    setPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  return (
+    <section className="events-content" aria-labelledby="bookings-title">
+      <div className="events-intro">
+        <div>
+          <p className="eyebrow">Your reservations</p>
+          <h1 id="bookings-title">My bookings</h1>
+          <p>Keep track of every event you have booked.</p>
+        </div>
+        {!loading && bookingPage && (
+          <p className="events-count">{bookingPage.total_items} total</p>
+        )}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Bookings could not be loaded"
+          message={error}
+          onRetry={() => setRetryCount((count) => count + 1)}
+        />
+      ) : loading ? (
+        <div className="booking-list" aria-label="Loading bookings" aria-busy="true">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div
+              className="booking-card booking-card-skeleton skeleton-block"
+              key={index}
+            />
+          ))}
+        </div>
+      ) : bookingPage.items.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No bookings yet</h2>
+          <p>Your event reservations will appear here.</p>
+        </div>
+      ) : (
+        <>
+          <div className="booking-list">
+            {bookingPage.items.map((booking) => (
+              <article className="booking-card" key={booking.id}>
+                <div className="booking-icon"><AppIcon type="bookings" /></div>
+                <div className="booking-main">
+                  <div className="booking-heading">
+                    <h2 title={booking.event_id}>Event {shortId(booking.event_id)}</h2>
+                    <span className={`status-badge status-${booking.status}`}>
+                      {booking.status}
+                    </span>
+                  </div>
+                  <p>Booked {formatDateTime(booking.booked_at)}</p>
+                  <small title={booking.id}>Booking #{shortId(booking.id)}</small>
+                </div>
+                <div className="booking-quantity">
+                  <span>Tickets</span>
+                  <strong>{booking.quantity}</strong>
+                </div>
+                {booking.cancelled_at && (
+                  <p className="booking-cancelled">
+                    Cancelled {formatDateTime(booking.cancelled_at)}
+                  </p>
+                )}
+              </article>
+            ))}
+          </div>
+          <Pagination
+            pageData={bookingPage}
+            loading={loading}
+            onChange={changePage}
+            label="Booking"
+          />
+        </>
+      )}
+    </section>
+  )
+}
+
+function useProtectedList({
+  tokens,
+  load,
+  resource,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadData() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await load({ tokens: tokensRef.current })
+        if (!Array.isArray(result.data)) {
+          throw new Error(`Invalid ${resource} response.`)
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setData(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, resource))
+        setLoading(false)
+      }
+    }
+
+    loadData()
+    return () => { cancelled = true }
+  }, [load, onSessionExpired, onTokensChanged, resource, retryCount])
+
+  return {
+    data,
+    loading,
+    error,
+    retry: () => setRetryCount((count) => count + 1),
+  }
+}
+
+function UsersPage(props) {
+  const {
+    data: users,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({ ...props, load: listUsers, resource: 'users' })
+
+  return (
+    <section className="events-content" aria-labelledby="users-title">
+      <div className="events-intro">
+        <div>
+          <p className="eyebrow">Administration</p>
+          <h1 id="users-title">Users</h1>
+          <p>Review registered accounts and their access roles.</p>
+        </div>
+        {users && <p className="events-count">{users.length} users</p>}
+      </div>
+
+      {error ? (
+        <ResourceError title="Users could not be loaded" message={error} onRetry={retry} />
+      ) : loading ? (
+        <div
+          className="data-panel skeleton-block data-loading"
+          aria-label="Loading users"
+          aria-busy="true"
+        />
+      ) : users.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No users found</h2>
+        </div>
+      ) : (
+        <div className="data-panel table-scroll">
+          <table className="data-table">
+            <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td><strong>{user.name}</strong><span>{user.email}</span></td>
+                  <td><span className="role-badge">{user.role}</span></td>
+                  <td>
+                    <span className={`account-status ${user.is_active ? 'account-active' : ''}`}>
+                      {user.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td>{formatDateTime(user.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function formatAuditAction(action) {
+  if (typeof action !== 'string') return 'Activity recorded'
+  const [entity, verb] = action.split('.')
+  const entityLabel = `${entity?.charAt(0).toUpperCase()}${entity?.slice(1)}`
+  return `${entityLabel} ${verb?.replaceAll('_', ' ') || ''}`.trim()
+}
+
+function LogsPage(props) {
+  const {
+    data: logs,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({ ...props, load: listAuditLogs, resource: 'audit logs' })
+
+  return (
+    <section className="events-content" aria-labelledby="logs-title">
+      <div className="events-intro">
+        <div>
+          <p className="eyebrow">Administration</p>
+          <h1 id="logs-title">Audit logs</h1>
+          <p>See the latest important activity across EventDesk.</p>
+        </div>
+        {logs && <p className="events-count">{logs.length} entries</p>}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Audit logs could not be loaded"
+          message={error}
+          onRetry={retry}
+        />
+      ) : loading ? (
+        <div
+          className="data-panel skeleton-block data-loading"
+          aria-label="Loading audit logs"
+          aria-busy="true"
+        />
+      ) : logs.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No audit activity yet</h2>
+        </div>
+      ) : (
+        <div className="log-list">
+          {logs.map((log) => (
+            <article className="log-item" key={log.id}>
+              <span className="log-icon"><AppIcon type="logs" /></span>
+              <div>
+                <h2>{formatAuditAction(log.action)}</h2>
+                <p>
+                  <span>{log.entity_type}</span>{' '}
+                  <code title={log.entity_id}>{shortId(log.entity_id)}</code>
+                  {' · '}Actor{' '}
+                  <code title={log.actor_id || ''}>
+                    {log.actor_id ? shortId(log.actor_id) : 'System'}
+                  </code>
+                </p>
+              </div>
+              <time dateTime={log.created_at}>{formatDateTime(log.created_at)}</time>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -1027,14 +1463,20 @@ function AuthVisual({ view }) {
   )
 }
 
+const APP_PAGES = ['events', 'bookings', 'users', 'logs']
+
+function getInitialAppPage() {
+  const page = window.location.pathname.slice(1)
+  return APP_PAGES.includes(page) ? page : 'events'
+}
+
 function getInitialView() {
-  return ['/login', '/events'].includes(window.location.pathname)
-    ? 'login'
-    : 'signup'
+  return window.location.pathname === '/signup' ? 'signup' : 'login'
 }
 
 function App() {
   const [view, setView] = useState(getInitialView)
+  const [appPage, setAppPage] = useState(getInitialAppPage)
   const [loginEmail, setLoginEmail] = useState('')
   const [notice, setNotice] = useState('')
   const [noticeType, setNoticeType] = useState('success')
@@ -1053,6 +1495,7 @@ function App() {
   useEffect(() => {
     function handlePopState() {
       setView(getInitialView())
+      setAppPage(getInitialAppPage())
       setNotice('')
       setNoticeType('success')
     }
@@ -1108,9 +1551,22 @@ function App() {
 
   function handleAuthenticated(tokens) {
     setSession({ status: 'authenticated', tokens })
+    setAppPage('events')
     setNotice('')
     window.history.replaceState({}, '', '/events')
   }
+
+  const handleTokensChanged = useCallback((tokens) => {
+    setSession({ status: 'authenticated', tokens })
+  }, [])
+
+  const handleAppNavigate = useCallback((nextPage, event) => {
+    event?.preventDefault()
+    if (!APP_PAGES.includes(nextPage)) return
+    window.history.pushState({}, '', `/${nextPage}`)
+    setAppPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
 
   const handleSessionExpired = useCallback((message) => {
     clearTokens()
@@ -1142,15 +1598,42 @@ function App() {
   }
 
   const isAuthenticated = session.status === 'authenticated'
+  const claims = isAuthenticated
+    ? getAccessTokenClaims(session.tokens.access_token)
+    : null
+  const role = typeof claims?.role === 'string' ? claims.role : 'attendee'
+  const isAdminPage = ['users', 'logs'].includes(appPage)
+  const resolvedPage = isAdminPage && role !== 'admin' ? 'events' : appPage
+
+  useEffect(() => {
+    if (isAuthenticated && resolvedPage !== appPage) {
+      window.history.replaceState({}, '', `/${resolvedPage}`)
+    }
+  }, [appPage, isAuthenticated, resolvedPage])
 
   if (isAuthenticated) {
+    const pageProps = {
+      tokens: session.tokens,
+      onSessionExpired: handleSessionExpired,
+      onTokensChanged: handleTokensChanged,
+    }
+    const pageContent = {
+      events: <EventsPage {...pageProps} />,
+      bookings: <BookingsPage {...pageProps} />,
+      users: <UsersPage {...pageProps} />,
+      logs: <LogsPage {...pageProps} />,
+    }[resolvedPage]
+
     return (
-      <EventsPage
-        tokens={session.tokens}
+      <ApplicationShell
+        role={role}
+        currentPage={resolvedPage}
+        onNavigate={handleAppNavigate}
         onLogout={handleLogout}
         loggingOut={loggingOut}
-        onSessionExpired={handleSessionExpired}
-      />
+      >
+        {pageContent}
+      </ApplicationShell>
     )
   }
 
