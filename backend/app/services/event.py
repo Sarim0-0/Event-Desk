@@ -11,12 +11,14 @@ from app.models.user import User
 from app.repositories import event as event_repository
 from app.schemas.event import (
     EVENTS_PER_PAGE,
+    CategoryResponse,
     EventAvailabilityResponse,
     EventCreateRequest,
     EventListQuery,
     EventResponse,
     EventUpdate,
     PaginatedEventsResponse,
+    TagResponse,
 )
 from app.services import audit as audit_service
 
@@ -66,6 +68,18 @@ async def list_events(
         total_items=total_items,
         total_pages=total_pages,
     )
+
+
+async def list_categories(
+    session: AsyncSession,
+) -> list[CategoryResponse]:
+    categories = await event_repository.list_categories(session)
+    return [CategoryResponse.model_validate(category) for category in categories]
+
+
+async def list_tags(session: AsyncSession) -> list[TagResponse]:
+    tags = await event_repository.list_tags(session)
+    return [TagResponse.model_validate(tag) for tag in tags]
 
 
 async def get_event_availability(

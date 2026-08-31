@@ -1347,6 +1347,237 @@
   }
 }
 
+/* Event categories and tags */
+.form-field select,
+.event-category-filter select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 48px;
+  padding: 0 38px 0 14px;
+  border: 1px solid #dedce7;
+  border-radius: 11px;
+  color: #292538;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.form-field select:focus,
+.event-category-filter select:focus {
+  outline: none;
+  border-color: #7762e8;
+  box-shadow: 0 0 0 3px rgba(119, 98, 232, 0.12);
+}
+
+.form-field select:disabled,
+.event-category-filter select:disabled {
+  color: #9c97a5;
+  background: #f3f2f5;
+}
+
+.optional-label {
+  margin-left: 5px;
+  color: #9b96a4;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.event-tag-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.event-tag-fieldset legend {
+  margin-bottom: 9px;
+  color: #272437;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tag-options,
+.event-tag-filters > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.tag-options button,
+.event-tag-filters button {
+  padding: 7px 11px;
+  border: 1px solid #ded9e9;
+  border-radius: 999px;
+  color: #6f687c;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tag-options button:hover,
+.event-tag-filters button:hover {
+  border-color: #bcb3e6;
+  color: #5845b7;
+  background: #f8f6ff;
+}
+
+.tag-options button.tag-option-selected,
+.event-tag-filters button.filter-tag-selected {
+  border-color: #6b55d0;
+  color: #fff;
+  background: #6b55d0;
+}
+
+.metadata-help {
+  margin: 0;
+  color: #8e8997;
+  font-size: 11px;
+}
+
+.metadata-inline-error,
+.metadata-filter-error {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #f0c8ce;
+  border-radius: 10px;
+  color: #9f3949;
+  background: #fff5f6;
+  font-size: 10px;
+}
+
+.metadata-inline-error button,
+.metadata-filter-error button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+  background: #a94554;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.event-filters {
+  margin: -8px 0 26px;
+  padding: 15px 16px;
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  border: 1px solid #e5e1eb;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.event-category-filter label,
+.event-tag-filters legend {
+  display: block;
+  margin-bottom: 7px;
+  color: #4a4556;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.event-category-filter select {
+  height: 38px;
+  font-size: 11px;
+}
+
+.event-tag-filters {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.event-tag-filters legend small {
+  margin-left: 5px;
+  color: #a09aa9;
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.filter-message {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  color: #96909e;
+  font-size: 10px;
+}
+
+.clear-filters {
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #654fc6;
+  background: #f1eeff;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.metadata-filter-error {
+  margin-top: -17px;
+}
+
+.event-category {
+  position: absolute;
+  z-index: 3;
+  top: 14px;
+  left: 84px;
+  max-width: calc(100% - 170px);
+  padding: 5px 9px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(20, 18, 43, 0.17);
+  font-size: 9px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-detail-taxonomy {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-detail-taxonomy span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #5d49b8;
+  background: #f1eeff;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .event-filters {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .clear-filters {
+    justify-self: start;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

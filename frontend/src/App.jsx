@@ -9,7 +9,9 @@ import {
 import {
   createEvent,
   getEventAvailabilitySocketUrl,
+  listCategories,
   listEvents,
+  listTags,
 } from './api/events.js'
 import { createBooking, listBookings } from './api/bookings.js'
 import { listUsers } from './api/users.js'
@@ -702,7 +704,7 @@ function EventMetaIcon({ type }) {
   )
 }
 
-function EventCard({ event, index, onSelect }) {
+function EventCard({ event, index, onSelect, categoryName }) {
   const date = formatEventDate(event.event_datetime)
   const ticketsAvailable = Number(event.tickets_available)
   const totalTickets = Number(event.total_tickets)
@@ -721,6 +723,7 @@ function EventCard({ event, index, onSelect }) {
     >
       <div className={`event-card-cover event-theme-${index % EVENT_CARD_THEME_COUNT}`}>
         <span className="event-status">{event.status}</span>
+        {categoryName && <span className="event-category">{categoryName}</span>}
         <div className="event-date-tile">
           <strong>{date.day}</strong>
           <span>{date.month}</span>
@@ -932,6 +935,86 @@ function getResourceErrorMessage(error, resource) {
   return `We could not load ${resource}. Check your connection and try again.`
 }
 
+function isMetadataList(value) {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item?.id === 'string' &&
+        typeof item?.name === 'string' &&
+        item.name.length > 0,
+    )
+  )
+}
+
+function useEventMetadata({
+  enabled,
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [categories, setCategories] = useState([])
+  const [tags, setTags] = useState([])
+  const [loading, setLoading] = useState(enabled)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    if (!enabled) return undefined
+
+    let cancelled = false
+    async function loadMetadata() {
+      setLoading(true)
+      setError(null)
+      try {
+        const categoryResult = await listCategories({
+          tokens: tokensRef.current,
+        })
+        const tagResult = await listTags({ tokens: categoryResult.tokens })
+        if (
+          !isMetadataList(categoryResult.data) ||
+          !isMetadataList(tagResult.data)
+        ) {
+          throw new Error('Invalid event metadata response.')
+        }
+        if (!cancelled) {
+          setCategories(categoryResult.data)
+          setTags(tagResult.data)
+          setLoading(false)
+          if (tagResult.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = tagResult.tokens
+            onTokensChanged(tagResult.tokens)
+          }
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, 'categories and tags'))
+        setLoading(false)
+      }
+    }
+
+    loadMetadata()
+    return () => { cancelled = true }
+  }, [enabled, onSessionExpired, onTokensChanged, retryCount])
+
+  return {
+    categories,
+    tags,
+    loading,
+    error,
+    retry: () => setRetryCount((count) => count + 1),
+  }
+}
+
 function getFormApiErrors(error, fields, fallbackMessage) {
   if (!(error instanceof ApiError)) {
     return {
@@ -1015,6 +1098,8 @@ const EMPTY_EVENT_FORM = {
   event_datetime: '',
   ticket_price: '',
   total_tickets: '',
+  category_id: '',
+  tag_ids: [],
 }
 
 function CreateEventModal({
@@ -1023,6 +1108,7 @@ function CreateEventModal({
   onCreated,
   onSessionExpired,
   onTokensChanged,
+  metadata,
 }) {
   const [form, setForm] = useState(EMPTY_EVENT_FORM)
   const [fieldErrors, setFieldErrors] = useState({})
@@ -1033,6 +1119,17 @@ function CreateEventModal({
     const { name, value } = event.target
     setForm((current) => ({ ...current, [name]: value }))
     setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  function toggleTag(tagId) {
+    setForm((current) => ({
+      ...current,
+      tag_ids: current.tag_ids.includes(tagId)
+        ? current.tag_ids.filter((id) => id !== tagId)
+        : [...current.tag_ids, tagId],
+    }))
+    setFieldErrors((current) => ({ ...current, tag_ids: undefined }))
     setFormError(null)
   }
 
@@ -1089,8 +1186,8 @@ function CreateEventModal({
           event_datetime: new Date(form.event_datetime).toISOString(),
           ticket_price: Number(form.ticket_price),
           total_tickets: Number(form.total_tickets),
-          category_id: null,
-          tag_ids: [],
+          category_id: form.category_id || null,
+          tag_ids: form.tag_ids,
           status: 'published',
         },
       })
@@ -1123,6 +1220,12 @@ function CreateEventModal({
         <p>Your event will be published and shown in the events grid immediately.</p>
       </div>
       <Alert>{formError}</Alert>
+      {metadata.error && (
+        <div className="metadata-inline-error" role="alert">
+          <span>{metadata.error}</span>
+          <button type="button" onClick={metadata.retry}>Try again</button>
+        </div>
+      )}
       <form className="event-form" onSubmit={handleSubmit} noValidate>
         <div className="form-field event-form-wide">
           <label htmlFor="event-title">Event name</label>
@@ -1140,6 +1243,16 @@ function CreateEventModal({
           <FieldError id="event-venue-error">{fieldErrors.venue}</FieldError>
         </div>
         <div className="form-field">
+          <label htmlFor="event-category">Category <span className="optional-label">Optional</span></label>
+          <select id="event-category" name="category_id" value={form.category_id} onChange={updateField} disabled={metadata.loading}>
+            <option value="">No category</option>
+            {metadata.categories.map((category) => (
+              <option value={category.id} key={category.id}>{category.name}</option>
+            ))}
+          </select>
+          <FieldError id="event-category-error">{fieldErrors.category_id}</FieldError>
+        </div>
+        <div className="form-field">
           <label htmlFor="event-datetime">Date and time</label>
           <input id="event-datetime" name="event_datetime" type="datetime-local" value={form.event_datetime} onChange={updateField} className={fieldErrors.event_datetime ? 'input-error' : ''} />
           <FieldError id="event-datetime-error">{fieldErrors.event_datetime}</FieldError>
@@ -1154,9 +1267,32 @@ function CreateEventModal({
           <input id="event-price" name="ticket_price" type="number" min="0" step="0.01" value={form.ticket_price} onChange={updateField} className={fieldErrors.ticket_price ? 'input-error' : ''} placeholder="0.00" />
           <FieldError id="event-price-error">{fieldErrors.ticket_price}</FieldError>
         </div>
-        <div className="event-publish-note">
+        <fieldset className="event-tag-fieldset event-form-wide">
+          <legend>Tags <span className="optional-label">Optional</span></legend>
+          {metadata.loading ? (
+            <p className="metadata-help">Loading tags…</p>
+          ) : metadata.tags.length === 0 ? (
+            <p className="metadata-help">No tags are available.</p>
+          ) : (
+            <div className="tag-options">
+              {metadata.tags.map((tag) => (
+                <button
+                  className={form.tag_ids.includes(tag.id) ? 'tag-option-selected' : ''}
+                  type="button"
+                  onClick={() => toggleTag(tag.id)}
+                  aria-pressed={form.tag_ids.includes(tag.id)}
+                  key={tag.id}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <FieldError id="event-tags-error">{fieldErrors.tag_ids}</FieldError>
+        </fieldset>
+        <div className="event-publish-note event-form-wide">
           <strong>Published immediately</strong>
-          <span>The backend accepts category and tags as optional, so they can be added when lookup support is available.</span>
+          <span>The event will be visible in the event grid and its selected filters.</span>
         </div>
         <div className="modal-actions event-form-wide">
           <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
@@ -1177,6 +1313,8 @@ function EventDetailsModal({
   onBooked,
   onSessionExpired,
   onTokensChanged,
+  categoryName,
+  tagNames,
 }) {
   const [showBooking, setShowBooking] = useState(false)
   const [quantity, setQuantity] = useState('1')
@@ -1274,6 +1412,12 @@ function EventDetailsModal({
         <div className="event-detail-description">
           <h2>About this event</h2>
           <p>{event.description}</p>
+          {(categoryName || tagNames.length > 0) && (
+            <div className="event-detail-taxonomy">
+              {categoryName && <span>{categoryName}</span>}
+              {tagNames.map((tagName) => <span key={tagName}>#{tagName}</span>)}
+            </div>
+          )}
         </div>
 
         <Alert type="success">{confirmation}</Alert>
@@ -1365,14 +1509,25 @@ function useEventAvailability(tokens, onAvailabilityUpdate) {
   }, [onAvailabilityUpdate, tokens.access_token])
 }
 
-function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
+function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
   const [page, setPage] = useState(1)
   const [eventPage, setEventPage] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [selectedTagIds, setSelectedTagIds] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
   const tokensRef = useRef(tokens)
+  const selectedTagKey = selectedTagIds.join('|')
+  const categoryNames = useMemo(
+    () => new Map(metadata.categories.map((item) => [item.id, item.name])),
+    [metadata.categories],
+  )
+  const tagNames = useMemo(
+    () => new Map(metadata.tags.map((item) => [item.id, item.name])),
+    [metadata.tags],
+  )
 
   useEffect(() => {
     tokensRef.current = tokens
@@ -1408,7 +1563,12 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
       setError(null)
 
       try {
-        const result = await listEvents({ tokens: tokensRef.current, page })
+        const result = await listEvents({
+          tokens: tokensRef.current,
+          page,
+          categoryId: selectedCategoryId,
+          tagIds: selectedTagKey ? selectedTagKey.split('|') : [],
+        })
         const response = result.data
 
         if (!validateEventPage(response)) {
@@ -1441,7 +1601,14 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
     return () => {
       cancelled = true
     }
-  }, [onSessionExpired, onTokensChanged, page, retryCount])
+  }, [
+    onSessionExpired,
+    onTokensChanged,
+    page,
+    retryCount,
+    selectedCategoryId,
+    selectedTagKey,
+  ])
 
   const firstVisibleItem = eventPage?.total_items
     ? (eventPage.page - 1) * eventPage.page_size + 1
@@ -1497,6 +1664,31 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
     )
   }, [])
 
+  function selectCategory(event) {
+    setSelectedCategoryId(event.target.value)
+    setPage(1)
+    setSelectedEvent(null)
+  }
+
+  function toggleFilterTag(tagId) {
+    setSelectedTagIds((current) =>
+      current.includes(tagId)
+        ? current.filter((id) => id !== tagId)
+        : [...current, tagId],
+    )
+    setPage(1)
+    setSelectedEvent(null)
+  }
+
+  function clearFilters() {
+    setSelectedCategoryId('')
+    setSelectedTagIds([])
+    setPage(1)
+    setSelectedEvent(null)
+  }
+
+  const filtersActive = Boolean(selectedCategoryId || selectedTagIds.length)
+
   return (
     <section className="events-content" aria-labelledby="events-title">
         <div className="events-intro">
@@ -1512,6 +1704,54 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
             </p>
           )}
         </div>
+
+        <div className="event-filters" aria-label="Filter events">
+          <div className="event-category-filter">
+            <label htmlFor="event-filter-category">Category</label>
+            <select
+              id="event-filter-category"
+              value={selectedCategoryId}
+              onChange={selectCategory}
+              disabled={metadata.loading}
+            >
+              <option value="">All categories</option>
+              {metadata.categories.map((category) => (
+                <option value={category.id} key={category.id}>{category.name}</option>
+              ))}
+            </select>
+          </div>
+          <fieldset className="event-tag-filters">
+            <legend>Tags <small>Events must match every selected tag</small></legend>
+            <div>
+              {metadata.loading ? (
+                <span className="filter-message">Loading filters…</span>
+              ) : metadata.tags.length === 0 ? (
+                <span className="filter-message">No tags available</span>
+              ) : metadata.tags.map((tag) => (
+                <button
+                  className={selectedTagIds.includes(tag.id) ? 'filter-tag-selected' : ''}
+                  type="button"
+                  onClick={() => toggleFilterTag(tag.id)}
+                  aria-pressed={selectedTagIds.includes(tag.id)}
+                  key={tag.id}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          {filtersActive && (
+            <button className="clear-filters" type="button" onClick={clearFilters}>
+              Clear filters
+            </button>
+          )}
+        </div>
+        {metadata.error && (
+          <div className="metadata-filter-error" role="alert">
+            <span>{metadata.error}</span>
+            <button type="button" onClick={metadata.retry}>Try again</button>
+          </div>
+        )}
 
         {error ? (
           <div className="events-state events-error" role="alert">
@@ -1531,8 +1771,8 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
         ) : eventPage.items.length === 0 ? (
           <div className="events-state">
             <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
-            <h2>No upcoming events yet</h2>
-            <p>Published events will appear here as soon as they are available.</p>
+            <h2>{filtersActive ? 'No events match these filters' : 'No upcoming events yet'}</h2>
+            <p>{filtersActive ? 'Try removing a category or tag filter.' : 'Published events will appear here as soon as they are available.'}</p>
           </div>
         ) : (
           <>
@@ -1542,6 +1782,7 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
                   event={event}
                   index={index}
                   onSelect={setSelectedEvent}
+                  categoryName={categoryNames.get(event.category_id)}
                   key={event.id}
                 />
               ))}
@@ -1584,6 +1825,10 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged }) {
             onBooked={handleBooked}
             onSessionExpired={onSessionExpired}
             onTokensChanged={onTokensChanged}
+            categoryName={categoryNames.get(selectedEvent.category_id)}
+            tagNames={selectedEvent.tag_ids
+              .map((tagId) => tagNames.get(tagId))
+              .filter(Boolean)}
           />
         )}
     </section>
@@ -2119,6 +2364,12 @@ function App() {
   }
 
   const isAuthenticated = session.status === 'authenticated'
+  const eventMetadata = useEventMetadata({
+    enabled: isAuthenticated,
+    tokens: session.tokens,
+    onSessionExpired: handleSessionExpired,
+    onTokensChanged: handleTokensChanged,
+  })
   const claims = isAuthenticated
     ? getAccessTokenClaims(session.tokens.access_token)
     : null
@@ -2147,7 +2398,13 @@ function App() {
       onTokensChanged: handleTokensChanged,
     }
     const pageContent = {
-      events: <EventsPage {...pageProps} key={eventReloadVersion} />,
+      events: (
+        <EventsPage
+          {...pageProps}
+          metadata={eventMetadata}
+          key={eventReloadVersion}
+        />
+      ),
       bookings: <BookingsPage {...pageProps} />,
       users: <UsersPage {...pageProps} />,
       logs: <LogsPage {...pageProps} />,
@@ -2171,6 +2428,7 @@ function App() {
             onCreated={handleEventCreated}
             onSessionExpired={handleSessionExpired}
             onTokensChanged={handleTokensChanged}
+            metadata={eventMetadata}
           />
         )}
       </ApplicationShell>

@@ -179,6 +179,15 @@ async def get_category_by_id(
     return await session.get(Category, category_id)
 
 
+async def list_categories(session: AsyncSession) -> list[Category]:
+    statement = select(Category).order_by(
+        func.lower(Category.name),
+        Category.id,
+    )
+    categories = await session.scalars(statement)
+    return list(categories.all())
+
+
 async def get_tags_by_ids(
     session: AsyncSession,
     tag_ids: Collection[UUID],
@@ -189,6 +198,15 @@ async def get_tags_by_ids(
     statement = select(Tag).where(Tag.id.in_(tag_ids))
     result = await session.scalars(statement)
     return list(result.all())
+
+
+async def list_tags(session: AsyncSession) -> list[Tag]:
+    statement = select(Tag).order_by(
+        func.lower(Tag.name),
+        Tag.id,
+    )
+    tags = await session.scalars(statement)
+    return list(tags.all())
 
 
 def update_event(

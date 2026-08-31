@@ -19,13 +19,22 @@ from app.core.permissions import (
 )
 from app.models.user import User
 from app.schemas.event import (
+    CategoryResponse,
     EventCreateRequest,
     EventListQuery,
     EventResponse,
     EventUpdate,
     PaginatedEventsResponse,
+    TagResponse,
 )
-from app.services.event import cancel_event, create_event, list_events, update_event
+from app.services.event import (
+    cancel_event,
+    create_event,
+    list_categories,
+    list_events,
+    list_tags,
+    update_event,
+)
 from app.tasks.event_availability import (
     broadcast_event_availability_in_background,
 )
@@ -49,6 +58,32 @@ async def list_events_endpoint(
     session: DatabaseSession,
 ) -> PaginatedEventsResponse:
     return await list_events(session, query)
+
+
+@router.get(
+    "/categories",
+    response_model=list[CategoryResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_event_categories",
+)
+async def list_categories_endpoint(
+    _current_user: CurrentUser,
+    session: DatabaseSession,
+) -> list[CategoryResponse]:
+    return await list_categories(session)
+
+
+@router.get(
+    "/tags",
+    response_model=list[TagResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_event_tags",
+)
+async def list_tags_endpoint(
+    _current_user: CurrentUser,
+    session: DatabaseSession,
+) -> list[TagResponse]:
+    return await list_tags(session)
 
 
 @router.post(

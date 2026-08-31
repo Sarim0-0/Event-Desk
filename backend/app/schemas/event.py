@@ -17,6 +17,24 @@ from app.models.enums import EventStatus
 EVENTS_PER_PAGE = 6
 
 
+class CategoryResponse(BaseModel):
+    """Category option available when creating or filtering Events."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+
+
+class TagResponse(BaseModel):
+    """Tag option available when creating or filtering Events."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+
+
 class EventCreateRequest(BaseModel):
     """Client-provided information used to create an event."""
 
