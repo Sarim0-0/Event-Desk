@@ -7,20 +7,27 @@ import {
   signUp,
 } from './api/auth.js'
 import {
+  cancelEvent,
   createEvent,
   getEventAvailabilitySocketUrl,
   listCategories,
   listEvents,
   listTags,
+  updateEvent,
 } from './api/events.js'
-import { createBooking, listBookings } from './api/bookings.js'
+import { cancelBooking, createBooking, listBookings } from './api/bookings.js'
 import {
   getNotificationSocketUrl,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
 } from './api/notifications.js'
-import { listUsers } from './api/users.js'
+import {
+  changeUserRole,
+  deactivateUser,
+  listUsers,
+  updateOwnProfile,
+} from './api/users.js'
 import { listAuditLogs } from './api/auditLogs.js'
 import { SessionExpiredError } from './api/authenticated.js'
 import {
@@ -546,7 +553,7 @@ function LoginForm({
     try {
       const tokens = await logIn(payload)
       saveTokens(tokens)
-      onAuthenticated(tokens)
+      onAuthenticated(tokens, { email: payload.email })
     } catch (error) {
       const apiErrors = getApiErrors(
         error,
@@ -710,7 +717,7 @@ function EventMetaIcon({ type }) {
   )
 }
 
-function EventCard({ event, onSelect, index, categoryName }) {
+function EventCard({ event, onSelect, index, categoryName, isOwned }) {
   const date = formatEventDate(event.event_datetime)
   const ticketsAvailable = Number(event.tickets_available)
   const totalTickets = Number(event.total_tickets)
@@ -721,7 +728,7 @@ function EventCard({ event, onSelect, index, categoryName }) {
 
   return (
     <button
-      className="event-card"
+      className={`event-card ${isOwned ? 'event-card-owned' : ''}`}
       type="button"
       aria-label={`View ${event.title}`}
       title={`View details for ${event.title}`}
@@ -729,6 +736,7 @@ function EventCard({ event, onSelect, index, categoryName }) {
     >
       <div className={`event-card-cover event-theme-${index % EVENT_CARD_THEME_COUNT}`}>
         <span className="event-status">{event.status}</span>
+        {isOwned && <span className="event-owner-label">Your event</span>}
         {categoryName && <span className="event-category">{categoryName}</span>}
         <div className="event-date-tile">
           <strong>{date.day}</strong>
@@ -838,15 +846,17 @@ function NotificationIcon({ type }) {
 
 function ApplicationShell({
   role,
+  profile,
   currentPage,
   onNavigate,
   onCreateEvent,
+  onOpenProfile,
   onLogout,
   loggingOut,
   unreadNotificationsCount = 0,
   children,
 }) {
-  const profileInitial = role.charAt(0).toUpperCase()
+  const profileInitial = (profile?.name || role).charAt(0).toUpperCase()
   const navigation = [
     { key: 'events', label: 'Events' },
     { key: 'bookings', label: 'Bookings' },
@@ -917,8 +927,9 @@ function ApplicationShell({
           <button
             className="profile-button"
             type="button"
-            aria-label={`${role} profile. Profile page coming soon.`}
-            title="Profile coming soon"
+            onClick={onOpenProfile}
+            aria-label="Open profile settings"
+            title="Profile settings"
           >
             {profileInitial}
           </button>
@@ -1352,15 +1363,279 @@ function CreateEventModal({
   )
 }
 
+function toDateTimeLocalInput(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return localDate.toISOString().slice(0, 16)
+}
+
+function EditEventModal({
+  event,
+  tokens,
+  onClose,
+  onUpdated,
+  onCancelled,
+  onSessionExpired,
+  onTokensChanged,
+  metadata,
+}) {
+  const [form, setForm] = useState(() => ({
+    title: event.title,
+    description: event.description,
+    venue: event.venue,
+    event_datetime: toDateTimeLocalInput(event.event_datetime),
+    ticket_price: String(event.ticket_price),
+    total_tickets: String(event.total_tickets),
+    category_id: event.category_id || '',
+    tag_ids: [...event.tag_ids],
+    status: event.status,
+  }))
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [action, setAction] = useState(null)
+
+  function updateField(changeEvent) {
+    const { name, value } = changeEvent.target
+    setForm((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  function toggleTag(tagId) {
+    setForm((current) => ({
+      ...current,
+      tag_ids: current.tag_ids.includes(tagId)
+        ? current.tag_ids.filter((id) => id !== tagId)
+        : [...current.tag_ids, tagId],
+    }))
+    setFieldErrors((current) => ({ ...current, tag_ids: undefined }))
+    setFormError(null)
+  }
+
+  function validate() {
+    const errors = {}
+    const eventDate = new Date(form.event_datetime)
+    const ticketPrice = Number(form.ticket_price)
+    const totalTickets = Number(form.total_tickets)
+
+    if (!form.title.trim()) errors.title = 'Event name is required.'
+    else if (characterLength(form.title.trim()) > 255) {
+      errors.title = 'Event name must contain at most 255 characters.'
+    }
+    if (!form.description.trim()) errors.description = 'Description is required.'
+    if (!form.venue.trim()) errors.venue = 'Venue is required.'
+    else if (characterLength(form.venue.trim()) > 255) {
+      errors.venue = 'Venue must contain at most 255 characters.'
+    }
+    if (!form.event_datetime || Number.isNaN(eventDate.getTime())) {
+      errors.event_datetime = 'Choose a valid event date and time.'
+    } else if (eventDate <= new Date()) {
+      errors.event_datetime = 'Event date and time must be in the future.'
+    }
+    if (form.ticket_price === '' || !Number.isFinite(ticketPrice) || ticketPrice < 0) {
+      errors.ticket_price = 'Enter a ticket price of 0 or more.'
+    } else if (!/^\d+(?:\.\d{1,2})?$/.test(form.ticket_price)) {
+      errors.ticket_price = 'Ticket price can have at most two decimal places.'
+    }
+    if (!Number.isInteger(totalTickets) || totalTickets < 1) {
+      errors.total_tickets = 'Enter at least one ticket.'
+    }
+    if (!['draft', 'published'].includes(form.status)) {
+      errors.status = 'Choose either draft or published.'
+    }
+    return errors
+  }
+
+  async function handleSubmit(submitEvent) {
+    submitEvent.preventDefault()
+    const errors = validate()
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setAction('saving')
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await updateEvent({
+        tokens,
+        eventId: event.id,
+        event: {
+          title: form.title.trim(),
+          description: form.description.trim(),
+          venue: form.venue.trim(),
+          event_datetime: new Date(form.event_datetime).toISOString(),
+          ticket_price: Number(form.ticket_price),
+          total_tickets: Number(form.total_tickets),
+          category_id: form.category_id || null,
+          tag_ids: form.tag_ids,
+          status: form.status,
+        },
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onUpdated(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        [...Object.keys(EMPTY_EVENT_FORM), 'status'],
+        'We could not update the event. Please try again.',
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setAction(null)
+    }
+  }
+
+  async function handleCancelEvent() {
+    if (action) return
+
+    setAction('cancelling')
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await cancelEvent({ tokens, eventId: event.id })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onCancelled(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      setFormError(
+        getResourceErrorMessage(error, 'the event cancellation'),
+      )
+    } finally {
+      setAction(null)
+    }
+  }
+
+  return (
+    <Modal titleId="edit-event-title" onClose={onClose} className="form-modal">
+      <div className="modal-heading">
+        <p className="eyebrow">Your event</p>
+        <h1 id="edit-event-title">Edit event</h1>
+        <p>Update the details below, or cancel this event for all attendees.</p>
+      </div>
+      <Alert>{formError}</Alert>
+      {metadata.error && (
+        <div className="metadata-inline-error" role="alert">
+          <span>{metadata.error}</span>
+          <button type="button" onClick={metadata.retry}>Try again</button>
+        </div>
+      )}
+      <form className="event-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field event-form-wide">
+          <label htmlFor="edit-event-title-input">Event name</label>
+          <input id="edit-event-title-input" name="title" value={form.title} onChange={updateField} maxLength={255} className={fieldErrors.title ? 'input-error' : ''} />
+          <FieldError id="edit-event-title-error">{fieldErrors.title}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="edit-event-description">Description</label>
+          <textarea id="edit-event-description" name="description" value={form.description} onChange={updateField} className={fieldErrors.description ? 'input-error' : ''} rows="4" />
+          <FieldError id="edit-event-description-error">{fieldErrors.description}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="edit-event-venue">Venue</label>
+          <input id="edit-event-venue" name="venue" value={form.venue} onChange={updateField} maxLength={255} className={fieldErrors.venue ? 'input-error' : ''} />
+          <FieldError id="edit-event-venue-error">{fieldErrors.venue}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-category">Category <span className="optional-label">Optional</span></label>
+          <select id="edit-event-category" name="category_id" value={form.category_id} onChange={updateField} disabled={metadata.loading}>
+            <option value="">No category</option>
+            {metadata.categories.map((category) => (
+              <option value={category.id} key={category.id}>{category.name}</option>
+            ))}
+          </select>
+          <FieldError id="edit-event-category-error">{fieldErrors.category_id}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-datetime">Date and time</label>
+          <input id="edit-event-datetime" name="event_datetime" type="datetime-local" value={form.event_datetime} onChange={updateField} className={fieldErrors.event_datetime ? 'input-error' : ''} />
+          <FieldError id="edit-event-datetime-error">{fieldErrors.event_datetime}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-tickets">Total tickets</label>
+          <input id="edit-event-tickets" name="total_tickets" type="number" min="1" step="1" value={form.total_tickets} onChange={updateField} className={fieldErrors.total_tickets ? 'input-error' : ''} />
+          <FieldError id="edit-event-tickets-error">{fieldErrors.total_tickets}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-price">Price per ticket</label>
+          <input id="edit-event-price" name="ticket_price" type="number" min="0" step="0.01" value={form.ticket_price} onChange={updateField} className={fieldErrors.ticket_price ? 'input-error' : ''} />
+          <FieldError id="edit-event-price-error">{fieldErrors.ticket_price}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-status">Status</label>
+          <select id="edit-event-status" name="status" value={form.status} onChange={updateField}>
+            <option value="draft">Draft</option>
+            <option value="published">Published</option>
+          </select>
+          <FieldError id="edit-event-status-error">{fieldErrors.status}</FieldError>
+        </div>
+        <fieldset className="event-tag-fieldset event-form-wide">
+          <legend>Tags <span className="optional-label">Optional</span></legend>
+          {metadata.loading ? (
+            <p className="metadata-help">Loading tagsâ€¦</p>
+          ) : metadata.tags.length === 0 ? (
+            <p className="metadata-help">No tags are available.</p>
+          ) : (
+            <div className="tag-options">
+              {metadata.tags.map((tag) => (
+                <button
+                  className={form.tag_ids.includes(tag.id) ? 'tag-option-selected' : ''}
+                  type="button"
+                  onClick={() => toggleTag(tag.id)}
+                  aria-pressed={form.tag_ids.includes(tag.id)}
+                  key={tag.id}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <FieldError id="edit-event-tags-error">{fieldErrors.tag_ids}</FieldError>
+        </fieldset>
+        <div className="modal-actions event-form-wide edit-event-actions">
+          <button className="destructive-button" type="button" onClick={handleCancelEvent} disabled={Boolean(action)}>
+            {action === 'cancelling' ? 'Cancelling event…' : 'Cancel event'}
+          </button>
+          <button className="secondary-button" type="button" onClick={onClose} disabled={Boolean(action)}>Discard changes</button>
+          <button className="primary-button" type="submit" disabled={Boolean(action)}>
+            {action === 'saving' && <span className="spinner" aria-hidden="true" />}
+            {action === 'saving' ? 'Saving changes…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function EventDetailsModal({
   event,
   tokens,
   onClose,
   onBooked,
+  onEdit,
+  onCancelled,
   onSessionExpired,
   onTokensChanged,
   categoryName,
   tagNames,
+  canEdit,
+  canCancel,
 }) {
   const [showBooking, setShowBooking] = useState(false)
   const [quantity, setQuantity] = useState('1')
@@ -1368,6 +1643,7 @@ function EventDetailsModal({
   const [formError, setFormError] = useState(null)
   const [confirmation, setConfirmation] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const date = formatEventDate(event.event_datetime)
   const available = Number(event.tickets_available)
   const total = Number(event.total_tickets)
@@ -1376,6 +1652,8 @@ function EventDetailsModal({
   const bookingTotal = Number.isInteger(requestedQuantity)
     ? ticketPrice * requestedQuantity
     : 0
+  const isUpcoming = new Date(event.event_datetime) > new Date()
+  const isBookable = event.status === 'published' && isUpcoming
 
   async function handleBooking(eventSubmit) {
     eventSubmit.preventDefault()
@@ -1423,6 +1701,28 @@ function EventDetailsModal({
       setFormError(apiErrors.message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleCancelEvent() {
+    if (cancelling || submitting) return
+
+    setCancelling(true)
+    setFormError(null)
+    try {
+      const result = await cancelEvent({ tokens, eventId: event.id })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onCancelled(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      setFormError(getResourceErrorMessage(error, 'the event cancellation'))
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -1486,18 +1786,38 @@ function EventDetailsModal({
             </div>
             <div className="booking-form-actions">
               <button className="secondary-button" type="button" onClick={() => setShowBooking(false)} disabled={submitting}>Back</button>
-              <button className="primary-button" type="submit" disabled={submitting || available === 0}>
+              <button className="primary-button" type="submit" disabled={submitting || available === 0 || !isBookable}>
                 {submitting && <span className="spinner" aria-hidden="true" />}
                 {submitting ? 'Booking…' : 'Confirm booking'}
               </button>
             </div>
           </form>
+        ) : canEdit ? (
+          <div className="event-detail-actions">
+            <p>You created this event. Manage its details or cancel it from the editor.</p>
+            <button className="primary-button" type="button" onClick={onEdit}>
+              Edit event
+            </button>
+          </div>
         ) : (
           <div className="event-detail-actions">
-            <p>{available === 0 ? 'This event is sold out.' : `${available} ticket${available === 1 ? '' : 's'} currently available.`}</p>
-            <button className="primary-button" type="button" onClick={() => { setShowBooking(true); setConfirmation(null) }} disabled={available === 0 || Boolean(confirmation)}>
-              {confirmation ? 'Booking confirmed' : available === 0 ? 'Sold out' : 'Book event'}
-            </button>
+            <p>
+              {!isBookable
+                ? 'This event is not currently available for booking.'
+                : available === 0
+                  ? 'This event is sold out.'
+                  : `${available} ticket${available === 1 ? '' : 's'} currently available.`}
+            </p>
+            <div className="event-detail-buttons">
+              <button className="primary-button" type="button" onClick={() => { setShowBooking(true); setConfirmation(null) }} disabled={!isBookable || available === 0 || Boolean(confirmation) || cancelling}>
+                {confirmation ? 'Booking confirmed' : !isBookable ? 'Unavailable' : available === 0 ? 'Sold out' : 'Book event'}
+              </button>
+              {canCancel && (
+                <button className="destructive-button" type="button" onClick={handleCancelEvent} disabled={cancelling || submitting}>
+                  {cancelling ? 'Cancelling…' : 'Cancel event'}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1707,15 +2027,24 @@ function useNotifications({
   })
 }
 
-function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
+function EventsPage({
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+  metadata,
+  currentUserId,
+  role,
+}) {
   const [page, setPage] = useState(1)
   const [eventPage, setEventPage] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
+  const [editingEvent, setEditingEvent] = useState(null)
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [actionNotice, setActionNotice] = useState('')
   const tokensRef = useRef(tokens)
   const selectedTagKey = selectedTagIds.join('|')
   const categoryNames = useMemo(
@@ -1730,6 +2059,12 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
   useEffect(() => {
     tokensRef.current = tokens
   }, [tokens])
+
+  useEffect(() => {
+    if (!actionNotice) return undefined
+    const timer = window.setTimeout(() => setActionNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [actionNotice])
 
   const handleAvailabilityUpdate = useCallback((availability) => {
     const applyAvailability = (event) =>
@@ -1867,6 +2202,30 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
     )
   }, [])
 
+  const handleEventUpdated = useCallback((updatedEvent) => {
+    setEventPage((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((item) =>
+              item.id === updatedEvent.id ? updatedEvent : item,
+            ),
+          }
+        : current,
+    )
+    setSelectedEvent(null)
+    setEditingEvent(null)
+    setActionNotice(`${updatedEvent.title} was updated.`)
+    setRetryCount((count) => count + 1)
+  }, [])
+
+  const handleEventCancelled = useCallback((cancelledEvent) => {
+    setSelectedEvent(null)
+    setEditingEvent(null)
+    setActionNotice(`${cancelledEvent.title} was cancelled.`)
+    setRetryCount((count) => count + 1)
+  }, [])
+
   function selectCategory(event) {
     setSelectedCategoryId(event.target.value)
     setPage(1)
@@ -1955,6 +2314,7 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
             <button type="button" onClick={metadata.retry}>Try again</button>
           </div>
         )}
+        {actionNotice && <Alert type="success">{actionNotice}</Alert>}
 
         {error ? (
           <div className="events-state events-error" role="alert">
@@ -1986,6 +2346,10 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
                   index={index}
                   onSelect={setSelectedEvent}
                   categoryName={categoryNames.get(event.category_id)}
+                  isOwned={
+                    ['organizer', 'admin'].includes(role) &&
+                    event.organizer_id === currentUserId
+                  }
                   key={event.id}
                 />
               ))}
@@ -2026,12 +2390,42 @@ function EventsPage({ tokens, onSessionExpired, onTokensChanged, metadata }) {
             tokens={tokens}
             onClose={() => setSelectedEvent(null)}
             onBooked={handleBooked}
+            onEdit={() => {
+              setEditingEvent(selectedEvent)
+              setSelectedEvent(null)
+            }}
+            onCancelled={handleEventCancelled}
             onSessionExpired={onSessionExpired}
             onTokensChanged={onTokensChanged}
             categoryName={categoryNames.get(selectedEvent.category_id)}
             tagNames={selectedEvent.tag_ids
               .map((tagId) => tagNames.get(tagId))
               .filter(Boolean)}
+            canEdit={
+              ['organizer', 'admin'].includes(role) &&
+              selectedEvent.organizer_id === currentUserId &&
+              ['draft', 'published'].includes(selectedEvent.status)
+            }
+            canCancel={
+              selectedEvent.status !== 'cancelled' &&
+              selectedEvent.status !== 'completed' &&
+              (role === 'admin' || (
+                role === 'organizer' &&
+                selectedEvent.organizer_id === currentUserId
+              ))
+            }
+          />
+        )}
+        {editingEvent && (
+          <EditEventModal
+            event={editingEvent}
+            tokens={tokens}
+            onClose={() => setEditingEvent(null)}
+            onUpdated={handleEventUpdated}
+            onCancelled={handleEventCancelled}
+            onSessionExpired={onSessionExpired}
+            onTokensChanged={onTokensChanged}
+            metadata={metadata}
           />
         )}
     </section>
@@ -2068,6 +2462,8 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [cancellingBookingId, setCancellingBookingId] = useState(null)
+  const [actionError, setActionError] = useState(null)
   const tokensRef = useRef(tokens)
 
   useEffect(() => {
@@ -2120,6 +2516,46 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  async function handleCancelBooking(booking) {
+    if (booking.status === 'cancelled' || cancellingBookingId) return
+
+    const confirmed = window.confirm(
+      'Cancel this booking? Your tickets will be returned to the event.',
+    )
+    if (!confirmed) return
+
+    setCancellingBookingId(booking.id)
+    setActionError(null)
+    try {
+      const result = await cancelBooking({
+        tokens: tokensRef.current,
+        bookingId: booking.id,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      setBookingPage((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === booking.id ? result.data : item,
+              ),
+            }
+          : current,
+      )
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(getResourceErrorMessage(requestError, 'the booking cancellation'))
+    } finally {
+      setCancellingBookingId(null)
+    }
+  }
+
   return (
     <section className="events-content" aria-labelledby="bookings-title">
       <div className="events-intro">
@@ -2156,6 +2592,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
         </div>
       ) : (
         <>
+          <Alert>{actionError}</Alert>
           <div className="booking-list">
             {bookingPage.items.map((booking) => (
               <article className="booking-card" key={booking.id}>
@@ -2173,6 +2610,22 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                 <div className="booking-quantity">
                   <span>Tickets</span>
                   <strong>{booking.quantity}</strong>
+                </div>
+                <div className="booking-actions">
+                  {booking.status === 'cancelled' ? (
+                    <span className="read-status-label">Cancelled</span>
+                  ) : (
+                    <button
+                      className="destructive-button"
+                      type="button"
+                      onClick={() => handleCancelBooking(booking)}
+                      disabled={Boolean(cancellingBookingId)}
+                    >
+                      {cancellingBookingId === booking.id
+                        ? 'Cancelling…'
+                        : 'Cancel booking'}
+                    </button>
+                  )}
                 </div>
                 {booking.cancelled_at && (
                   <p className="booking-cancelled">
@@ -2247,19 +2700,244 @@ function useProtectedList({
 
   return {
     data,
+    setData,
     loading,
     error,
     retry: () => setRetryCount((count) => count + 1),
   }
 }
 
-function UsersPage(props) {
+function ProfileModal({
+  tokens,
+  profile,
+  role,
+  onClose,
+  onUpdated,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [form, setForm] = useState(() => ({
+    name: profile?.name || '',
+    email: profile?.email || '',
+    role,
+  }))
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const isAdmin = role === 'admin'
+
+  function updateField(event) {
+    const { name, value } = event.target
+    setForm((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const nextName = normalizeName(form.name)
+    const nextEmail = normalizeEmail(form.email)
+    const payload = {}
+    const errors = {}
+
+    if (nextName) {
+      if (characterLength(nextName) < 2) {
+        errors.name = 'Name must contain at least 2 characters.'
+      } else if (characterLength(nextName) > 120) {
+        errors.name = 'Name must contain at most 120 characters.'
+      } else if (nextName !== profile?.name) {
+        payload.name = nextName
+      }
+    }
+
+    if (nextEmail) {
+      if (characterLength(nextEmail) > 320) {
+        errors.email = 'Email must contain at most 320 characters.'
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(nextEmail)) {
+        errors.email = 'Enter a valid email address.'
+      } else if (nextEmail !== profile?.email) {
+        payload.email = nextEmail
+      }
+    }
+
+    if (!isAdmin && form.role !== role) payload.role = form.role
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+    if (Object.keys(payload).length === 0) {
+      setFormError('Make a change before saving your profile.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await updateOwnProfile({ tokens, profile: payload })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onUpdated(result.data)
+      onClose()
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['name', 'email', 'role'],
+        'We could not update your profile. Please try again.',
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal titleId="profile-title" onClose={onClose} className="form-modal profile-modal">
+      <div className="modal-heading">
+        <p className="eyebrow">Account settings</p>
+        <h1 id="profile-title">Your profile</h1>
+        <p>Leave name or email blank to keep the existing value.</p>
+      </div>
+      <Alert>{formError}</Alert>
+      <form className="profile-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field">
+          <label htmlFor="profile-name">Name</label>
+          <input id="profile-name" name="name" value={form.name} onChange={updateField} maxLength={120} autoComplete="name" className={fieldErrors.name ? 'input-error' : ''} placeholder="Keep current name" />
+          <FieldError id="profile-name-error">{fieldErrors.name}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="profile-email">Email address</label>
+          <input id="profile-email" name="email" type="email" value={form.email} onChange={updateField} maxLength={320} autoComplete="email" className={fieldErrors.email ? 'input-error' : ''} placeholder="Keep current email" />
+          <FieldError id="profile-email-error">{fieldErrors.email}</FieldError>
+        </div>
+        {isAdmin ? (
+          <div className="profile-role-locked">
+            <span>Your role</span>
+            <strong>Admin</strong>
+            <p>Admin accounts cannot change their own role.</p>
+          </div>
+        ) : (
+          <div className="form-field">
+            <label htmlFor="profile-role">Role</label>
+            <select id="profile-role" name="role" value={form.role} onChange={updateField}>
+              {REGISTERABLE_ROLES.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <FieldError id="profile-role-error">{fieldErrors.role}</FieldError>
+          </div>
+        )}
+        <div className="modal-actions profile-form-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Saving…' : 'Save profile'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
   const {
     data: users,
+    setData: setUsers,
     loading,
     error,
     retry,
-  } = useProtectedList({ ...props, load: listUsers, resource: 'users' })
+  } = useProtectedList({
+    tokens,
+    onSessionExpired,
+    onTokensChanged,
+    load: listUsers,
+    resource: 'users',
+  })
+  const [actionLoading, setActionLoading] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  function applyUserUpdate(updatedUser) {
+    setUsers((current) =>
+      current
+        ? current.map((user) =>
+            user.id === updatedUser.id ? updatedUser : user,
+          )
+        : current,
+    )
+  }
+
+  async function handleRoleChange(user, nextRole) {
+    if (actionLoading || user.role === nextRole || user.role === 'admin' || !user.is_active) {
+      return
+    }
+
+    setActionLoading(`role-${user.id}`)
+    setActionError(null)
+    try {
+      const result = await changeUserRole({
+        tokens: tokensRef.current,
+        userId: user.id,
+        role: nextRole,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      applyUserUpdate(result.data)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(getResourceErrorMessage(requestError, 'the user role'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  async function handleDeactivate(user) {
+    if (actionLoading || user.role === 'admin' || !user.is_active) return
+
+    const confirmed = window.confirm(
+      `Deactivate ${user.name}? They will no longer be able to sign in.`,
+    )
+    if (!confirmed) return
+
+    setActionLoading(`status-${user.id}`)
+    setActionError(null)
+    try {
+      const result = await deactivateUser({
+        tokens: tokensRef.current,
+        userId: user.id,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      applyUserUpdate(result.data)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(getResourceErrorMessage(requestError, 'the account status'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
 
   return (
     <section className="events-content" aria-labelledby="users-title">
@@ -2271,6 +2949,7 @@ function UsersPage(props) {
         </div>
         {users && <p className="events-count">{users.length} users</p>}
       </div>
+      <Alert>{actionError}</Alert>
 
       {error ? (
         <ResourceError title="Users could not be loaded" message={error} onRetry={retry} />
@@ -2293,11 +2972,44 @@ function UsersPage(props) {
               {users.map((user) => (
                 <tr key={user.id}>
                   <td><strong>{user.name}</strong><span>{user.email}</span></td>
-                  <td><span className="role-badge">{user.role}</span></td>
                   <td>
-                    <span className={`account-status ${user.is_active ? 'account-active' : ''}`}>
-                      {user.is_active ? 'Active' : 'Inactive'}
-                    </span>
+                    {user.role === 'admin' ? (
+                      <span className="role-badge" title="Admin roles cannot be changed">
+                        admin
+                      </span>
+                    ) : (
+                      <select
+                        className="user-role-select"
+                        value={user.role}
+                        onChange={(event) => handleRoleChange(user, event.target.value)}
+                        disabled={!user.is_active || Boolean(actionLoading)}
+                        aria-label={`Change ${user.name}'s role`}
+                      >
+                        {REGISTERABLE_ROLES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
+                  <td>
+                    {user.role !== 'admin' && user.is_active ? (
+                      <button
+                        className="deactivate-user-button"
+                        type="button"
+                        onClick={() => handleDeactivate(user)}
+                        disabled={Boolean(actionLoading)}
+                      >
+                        {actionLoading === `status-${user.id}`
+                          ? 'Deactivating…'
+                          : 'Deactivate'}
+                      </button>
+                    ) : (
+                      <span className={`account-status ${user.is_active ? 'account-active' : ''}`}>
+                        {user.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    )}
                   </td>
                   <td>{formatDateTime(user.created_at)}</td>
                 </tr>
@@ -2778,6 +3490,8 @@ function App() {
   const [noticeType, setNoticeType] = useState('success')
   const [loggingOut, setLoggingOut] = useState(false)
   const [createEventOpen, setCreateEventOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [currentUser, setCurrentUser] = useState(null)
   const [eventReloadVersion, setEventReloadVersion] = useState(0)
   const [appNotice, setAppNotice] = useState('')
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0)
@@ -2854,12 +3568,13 @@ function App() {
     setNotice(`Account created for ${user.email}. Log in to continue.`)
   }
 
-  function handleAuthenticated(tokens) {
+  function handleAuthenticated(tokens, userHint = {}) {
     unreadNotificationIdsRef.current.clear()
     seenNotificationIdsRef.current.clear()
     notificationBootstrapRef.current = true
     setUnreadNotificationsCount(0)
     setLiveToast(null)
+    setCurrentUser(userHint)
     setSession({ status: 'authenticated', tokens })
     setAppPage('events')
     setNotice('')
@@ -2867,6 +3582,10 @@ function App() {
   }
 
   const handleTokensChanged = useCallback((tokens) => {
+    const refreshedRole = getAccessTokenClaims(tokens.access_token)?.role
+    if (typeof refreshedRole === 'string') {
+      setCurrentUser((current) => ({ ...current, role: refreshedRole }))
+    }
     setSession({ status: 'authenticated', tokens })
   }, [])
 
@@ -2923,6 +3642,8 @@ function App() {
     setSession({ status: 'anonymous', tokens: null })
     setLoggingOut(false)
     setCreateEventOpen(false)
+    setProfileOpen(false)
+    setCurrentUser(null)
     setView('login')
     setNoticeType('error')
     setNotice(message || 'Your session has expired. Please log in again.')
@@ -2947,6 +3668,8 @@ function App() {
       setSession({ status: 'anonymous', tokens: null })
       setLoggingOut(false)
       setCreateEventOpen(false)
+      setProfileOpen(false)
+      setCurrentUser(null)
       setView('login')
       window.history.replaceState({}, '', '/login')
       setNoticeType('success')
@@ -3032,7 +3755,9 @@ function App() {
   const claims = isAuthenticated
     ? getAccessTokenClaims(session.tokens.access_token)
     : null
-  const role = typeof claims?.role === 'string' ? claims.role : 'attendee'
+  const tokenRole = typeof claims?.role === 'string' ? claims.role : 'attendee'
+  const role = currentUser?.role || tokenRole
+  const currentUserId = typeof claims?.sub === 'string' ? claims.sub : null
   const isAdminPage = ['users', 'logs'].includes(appPage)
   const resolvedPage = isAdminPage && role !== 'admin' ? 'events' : appPage
 
@@ -3042,6 +3767,11 @@ function App() {
     setEventReloadVersion((version) => version + 1)
     setAppNotice(`${event.title} was created and published.`)
     window.history.pushState({}, '', '/events')
+  }
+
+  function handleProfileUpdated(updatedUser) {
+    setCurrentUser(updatedUser)
+    setAppNotice('Your profile was updated.')
   }
 
   useEffect(() => {
@@ -3061,6 +3791,8 @@ function App() {
         <EventsPage
           {...pageProps}
           metadata={eventMetadata}
+          currentUserId={currentUserId}
+          role={role}
           key={eventReloadVersion}
         />
       ),
@@ -3080,9 +3812,11 @@ function App() {
     return (
       <ApplicationShell
         role={role}
+        profile={currentUser}
         currentPage={resolvedPage}
         onNavigate={handleAppNavigate}
         onCreateEvent={() => setCreateEventOpen(true)}
+        onOpenProfile={() => setProfileOpen(true)}
         onLogout={handleLogout}
         loggingOut={loggingOut}
         unreadNotificationsCount={unreadNotificationsCount}
@@ -3126,6 +3860,17 @@ function App() {
             onSessionExpired={handleSessionExpired}
             onTokensChanged={handleTokensChanged}
             metadata={eventMetadata}
+          />
+        )}
+        {profileOpen && (
+          <ProfileModal
+            tokens={session.tokens}
+            profile={currentUser}
+            role={role}
+            onClose={() => setProfileOpen(false)}
+            onUpdated={handleProfileUpdated}
+            onSessionExpired={handleSessionExpired}
+            onTokensChanged={handleTokensChanged}
           />
         )}
       </ApplicationShell>

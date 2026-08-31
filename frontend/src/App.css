@@ -2616,6 +2616,220 @@ button.event-card:hover {
   }
 }
 
+/* Role-aware event, booking, profile, and user-management controls */
+.event-card-owned {
+  border-color: #b8a9ef;
+  box-shadow: 0 9px 25px rgba(94, 72, 192, 0.13);
+}
+
+.event-card-owned .event-card-cover {
+  background-image: linear-gradient(135deg, rgba(91, 62, 185, 0.3), rgba(112, 195, 157, 0.18));
+}
+
+.event-owner-label {
+  position: absolute;
+  z-index: 3;
+  top: 14px;
+  right: 14px;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(41, 116, 79, 0.78);
+  backdrop-filter: blur(8px);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.event-detail-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.event-detail-buttons .primary-button,
+.event-detail-buttons .destructive-button {
+  width: auto;
+  min-width: 128px;
+  margin: 0;
+  padding: 0 17px;
+}
+
+.destructive-button {
+  width: auto;
+  min-height: 40px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #f0bfc7;
+  border-radius: 10px;
+  color: #b73348;
+  background: #fff7f8;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.destructive-button:hover:not(:disabled) {
+  border-color: #df8190;
+  color: #9d2035;
+  background: #ffedf0;
+}
+
+.destructive-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.edit-event-actions {
+  align-items: center;
+}
+
+.edit-event-actions .destructive-button {
+  margin-right: auto;
+}
+
+.profile-form {
+  display: grid;
+  gap: 17px;
+}
+
+.profile-form-actions {
+  margin-top: 7px;
+}
+
+.profile-role-locked {
+  padding: 13px 14px;
+  border: 1px solid #ded8f1;
+  border-radius: 11px;
+  color: #5b4ba5;
+  background: #f8f6ff;
+}
+
+.profile-role-locked span,
+.profile-role-locked strong,
+.profile-role-locked p {
+  display: block;
+}
+
+.profile-role-locked span {
+  color: #8b849e;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.profile-role-locked strong {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.profile-role-locked p {
+  margin: 4px 0 0;
+  color: #77708b;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.booking-card {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.booking-actions {
+  min-width: 104px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.booking-actions .destructive-button {
+  min-height: 35px;
+  padding-inline: 11px;
+  font-size: 10px;
+}
+
+.user-role-select {
+  min-width: 112px;
+  height: 33px;
+  padding: 0 28px 0 9px;
+  border: 1px solid #dcd7e8;
+  border-radius: 8px;
+  color: #524b63;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.user-role-select:focus {
+  outline: none;
+  border-color: #7762e8;
+  box-shadow: 0 0 0 3px rgba(119, 98, 232, 0.12);
+}
+
+.user-role-select:disabled {
+  cursor: not-allowed;
+  color: #9d98a6;
+  background: #f4f3f6;
+}
+
+.deactivate-user-button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #efc3ca;
+  border-radius: 8px;
+  color: #ac3044;
+  background: #fff7f8;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.deactivate-user-button:hover:not(:disabled) {
+  border-color: #db8290;
+  background: #ffedf0;
+}
+
+.deactivate-user-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.destructive-button:focus-visible,
+.deactivate-user-button:focus-visible,
+.user-role-select:focus-visible {
+  outline: 3px solid rgba(205, 63, 83, 0.2);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .booking-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .booking-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .event-detail-buttons {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .event-detail-buttons .primary-button,
+  .event-detail-buttons .destructive-button {
+    flex: 1;
+  }
+}
+
 @media (max-width: 430px) {
   .app-header .profile-button {
     width: 35px;

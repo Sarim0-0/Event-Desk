@@ -13,3 +13,10 @@ export function createBooking({ tokens, eventId, quantity }) {
     body: { event_id: eventId, quantity },
   })
 }
+
+export function cancelBooking({ tokens, bookingId }) {
+  return authenticatedRequest(`/bookings/${bookingId}/cancel`, {
+    tokens,
+    method: 'POST',
+  })
+}

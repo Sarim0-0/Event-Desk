@@ -29,6 +29,21 @@ export function createEvent({ tokens, event }) {
   })
 }
 
+export function updateEvent({ tokens, eventId, event }) {
+  return authenticatedRequest(`/events/${eventId}`, {
+    tokens,
+    method: 'PATCH',
+    body: event,
+  })
+}
+
+export function cancelEvent({ tokens, eventId }) {
+  return authenticatedRequest(`/events/${eventId}/cancel`, {
+    tokens,
+    method: 'POST',
+  })
+}
+
 export function getEventAvailabilitySocketUrl(accessToken) {
   const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
   const apiBaseUrl = (configuredApiBaseUrl || '/api').replace(/\/$/, '')
