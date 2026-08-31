@@ -52,7 +52,7 @@ async def create_review(
             rating=request.rating,
             comment=request.comment,
         )
-        await review_repository.flush_review(session, review)
+        await session.flush([review])
 
         response = ReviewResponse.model_validate(review)
 
@@ -99,7 +99,7 @@ async def update_review(
             rating=changes.get("rating"),
             comment=changes.get("comment"),
         )
-        await review_repository.flush_review(session, review)
+        await session.flush([review])
         await review_repository.refresh_review(session, review)
 
         response = ReviewResponse.model_validate(review)
@@ -133,7 +133,7 @@ async def delete_review(
             )
 
         await review_repository.delete_review(session, review)
-        await review_repository.flush_review(session, review)
+        await session.flush([review])
 
         await session.commit()
     except Exception:

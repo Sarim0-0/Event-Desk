@@ -95,7 +95,7 @@ async def create_booking(
             status=BookingStatus.CONFIRMED,
             booked_at=datetime.now(timezone.utc),
         )
-        await booking_repository.flush_booking(session, booking)
+        await session.flush([booking])
         await booking_repository.refresh_booking(session, booking)
 
         audit_service.record_action(
@@ -178,7 +178,7 @@ async def cancel_booking(
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = datetime.now(timezone.utc)
 
-        await booking_repository.flush_booking(session, booking)
+        await session.flush([booking])
         await booking_repository.refresh_booking(session, booking)
 
         audit_service.record_action(

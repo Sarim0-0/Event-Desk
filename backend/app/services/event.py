@@ -243,7 +243,7 @@ async def update_event(
         )
         if "event_datetime" in changes:
             event_repository.reset_event_reminder(event)
-        await event_repository.flush_event(session)
+        await session.flush()
         await event_repository.refresh_event(session, event)
 
         response = EventResponse(
@@ -307,7 +307,7 @@ async def cancel_event(
             event,
             cancelled_at=datetime.now(timezone.utc),
         )
-        await event_repository.flush_event(session)
+        await session.flush()
         await event_repository.refresh_event(session, event)
 
         audit_service.record_action(

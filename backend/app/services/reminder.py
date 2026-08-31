@@ -58,7 +58,7 @@ async def send_event_reminder_batch(
             event,
             sent_at=current_time,
         )
-        await reminder_repository.flush_reminder_batch(session)
+        await session.flush()
 
         responses = [
             NotificationResponse.model_validate(notification)

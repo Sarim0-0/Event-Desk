@@ -102,10 +102,7 @@ async def mark_notification_read(
             notification,
             read_at=datetime.now(timezone.utc),
         )
-        await notification_repository.flush_notification(
-            session,
-            notification,
-        )
+        await session.flush([notification])
 
         response = NotificationResponse.model_validate(notification)
 
@@ -170,10 +167,7 @@ async def create_notification(
             related_booking_id=related_booking_id,
             related_review_id=related_review_id,
         )
-        await notification_repository.flush_notification(
-            session,
-            notification,
-        )
+        await session.flush([notification])
         await notification_repository.refresh_notification(
             session,
             notification,
@@ -218,10 +212,7 @@ async def create_event_cancellation_notifications(
         ]
 
         for notification in notifications:
-            await notification_repository.flush_notification(
-                session,
-                notification,
-            )
+            await session.flush([notification])
             await notification_repository.refresh_notification(
                 session,
                 notification,

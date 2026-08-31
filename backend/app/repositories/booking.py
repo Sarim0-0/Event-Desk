@@ -121,13 +121,6 @@ def add_booking(
     return booking
 
 
-async def flush_booking(
-    session: AsyncSession,
-    booking: Booking,
-) -> None:
-    await session.flush([booking])
-
-
 async def refresh_booking(
     session: AsyncSession,
     booking: Booking,

@@ -71,7 +71,7 @@ async def change_user_role(
         role_changed = target_user.role_id != role.id
         if role_changed:
             user_repository.update_user_role(target_user, role)
-            await user_repository.flush_user(session, target_user)
+            await session.flush([target_user])
             await user_repository.refresh_user(session, target_user)
 
             audit_service.record_action(
@@ -120,7 +120,7 @@ async def deactivate_user(
         deactivated_at = datetime.now(timezone.utc)
         if not already_deactivated:
             user_repository.deactivate_user(target_user, deactivated_at)
-            await user_repository.flush_user(session, target_user)
+            await session.flush([target_user])
             await user_repository.refresh_user(session, target_user)
 
         await user_repository.revoke_active_refresh_tokens(
@@ -189,7 +189,7 @@ async def update_own_profile(
             email=email,
             role=role,
         )
-        await user_repository.flush_user(session, current_user)
+        await session.flush([current_user])
         await user_repository.refresh_user(session, current_user)
 
         if role_changed:
@@ -253,7 +253,7 @@ async def change_own_password(
             user_id=current_user.id,
             revoked_at=datetime.now(timezone.utc),
         )
-        await user_repository.flush_user(session, current_user)
+        await session.flush([current_user])
 
         await session.commit()
     except Exception:

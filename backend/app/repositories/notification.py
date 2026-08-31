@@ -206,13 +206,6 @@ def add_notification(
     return notification
 
 
-async def flush_notification(
-    session: AsyncSession,
-    notification: Notification,
-) -> None:
-    await session.flush([notification])
-
-
 async def refresh_notification(
     session: AsyncSession,
     notification: Notification,

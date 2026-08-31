@@ -250,12 +250,6 @@ def reset_event_reminder(event: Event) -> Event:
     return event
 
 
-async def flush_event(
-    session: AsyncSession,
-) -> None:
-    await session.flush()
-
-
 async def refresh_event(
     session: AsyncSession,
     event: Event,

@@ -76,13 +76,6 @@ async def delete_review(
     await session.delete(review)
 
 
-async def flush_review(
-    session: AsyncSession,
-    review: Review,
-) -> None:
-    await session.flush([review])
-
-
 async def refresh_review(
     session: AsyncSession,
     review: Review,

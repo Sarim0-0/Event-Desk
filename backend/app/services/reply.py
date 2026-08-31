@@ -72,7 +72,7 @@ async def create_reply(
             replier_role=replier_role,
             body=request.body,
         )
-        await reply_repository.flush_reply(session, reply)
+        await session.flush([reply])
 
         response = ReplyResponse.model_validate(reply)
 
