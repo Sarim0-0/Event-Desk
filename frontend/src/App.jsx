@@ -11,6 +11,7 @@ import {
   createEvent,
   getEventAvailabilitySocketUrl,
   listCategories,
+  listCompletedEvents,
   listDraftEvents,
   listEvents,
   listTags,
@@ -20,6 +21,7 @@ import {
   cancelBooking,
   createBooking,
   listBookings,
+  listOrganizedEventBookings,
   listUserBookings,
 } from './api/bookings.js'
 import {
@@ -692,7 +694,11 @@ function validateEventPage(payload) {
       (event) =>
         typeof event?.organizer_id === 'string' &&
         typeof event.organizer_name === 'string' &&
-        event.organizer_name.trim().length > 0,
+        event.organizer_name.trim().length > 0 &&
+        (event.current_user_booking_status === null ||
+          ['confirmed', 'cancelled'].includes(
+            event.current_user_booking_status,
+          )),
     ) &&
     Number.isInteger(payload.page) &&
     payload.page >= 1 &&
@@ -773,6 +779,13 @@ function EventCard({ event, onSelect, index, categoryName, isOwned }) {
         <span className="event-status">{event.status}</span>
         {isOwned && <span className="event-owner-label">Your event</span>}
         {categoryName && <span className="event-category">{categoryName}</span>}
+        {event.current_user_booking_status && (
+          <span className={`event-booking-label event-booking-label-${event.current_user_booking_status}`}>
+            {event.current_user_booking_status === 'confirmed'
+              ? 'Booked'
+              : 'Booking cancelled'}
+          </span>
+        )}
         <div className="event-date-tile">
           <strong>{date.day}</strong>
           <span>{date.month}</span>
@@ -840,6 +853,9 @@ function AppIcon({ type }) {
     bookings: (
       <><path d="M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 010 4v2a2 2 0 01-2 2H5a2 2 0 00-2-2v-2a2 2 0 010-4V8z" /><path d="M13 7v2M13 11v2M13 15v2" /></>
     ),
+    'event-bookings': (
+      <><path d="M3 8a2 2 0 002-2h18v12H5a2 2 0 00-2-2v-2a2 2 0 010-4V8z" /><circle cx="14" cy="10" r="2" /><path d="M10 16a4 4 0 018 0" /></>
+    ),
     users: (
       <><circle cx="9" cy="8" r="3" /><path d="M3.5 20v-2a5.5 5.5 0 0111 0v2M16 5.5a3 3 0 010 5.5M17 14a5 5 0 013.5 4.8V20" /></>
     ),
@@ -903,7 +919,10 @@ function ApplicationShell({
     { key: 'events', label: 'Events' },
     { key: 'bookings', label: 'Bookings' },
     ...(['organizer', 'admin'].includes(role)
-      ? [{ key: 'reviews', label: 'Reviews' }]
+      ? [
+          { key: 'event-bookings', label: 'Event bookings' },
+          { key: 'reviews', label: 'Reviews' },
+        ]
       : []),
     ...(role === 'admin'
       ? [
@@ -1733,7 +1752,12 @@ function EventDetailsModal({
     ? ticketPrice * requestedQuantity
     : 0
   const isUpcoming = new Date(event.event_datetime) > new Date()
-  const isBookable = event.status === 'published' && isUpcoming
+  const bookingStatus = event.current_user_booking_status
+  const isBookable = (
+    event.status === 'published' &&
+    isUpcoming &&
+    !bookingStatus
+  )
 
   async function handleBooking(eventSubmit) {
     eventSubmit.preventDefault()
@@ -1850,6 +1874,17 @@ function EventDetailsModal({
         <Alert type="success">{confirmation}</Alert>
         <Alert>{formError}</Alert>
 
+        {bookingStatus && (
+          <div className={`event-booking-notice event-booking-notice-${bookingStatus}`}>
+            <AppIcon type={bookingStatus === 'confirmed' ? 'check' : 'cancel'} />
+            <span>
+              {bookingStatus === 'confirmed'
+                ? 'You have a confirmed booking for this event.'
+                : 'You previously cancelled your booking for this event.'}
+            </span>
+          </div>
+        )}
+
         {showBooking ? (
           <form className="booking-form" onSubmit={handleBooking} noValidate>
             <div>
@@ -1883,7 +1918,11 @@ function EventDetailsModal({
         ) : (
           <div className="event-detail-actions">
             <p>
-              {!isBookable
+              {bookingStatus === 'confirmed'
+                ? 'This event is already in your bookings.'
+                : bookingStatus === 'cancelled'
+                  ? 'A cancelled booking for this event remains in your booking history.'
+                  : !isBookable
                 ? 'This event is not currently available for booking.'
                 : available === 0
                   ? 'This event is sold out.'
@@ -1891,7 +1930,17 @@ function EventDetailsModal({
             </p>
             <div className="event-detail-buttons">
               <button className="primary-button" type="button" onClick={() => { setShowBooking(true); setConfirmation(null) }} disabled={!isBookable || available === 0 || Boolean(confirmation) || cancelling}>
-                {confirmation ? 'Booking confirmed' : !isBookable ? 'Unavailable' : available === 0 ? 'Sold out' : 'Book event'}
+                {confirmation
+                  ? 'Booking confirmed'
+                  : bookingStatus === 'confirmed'
+                    ? 'Already booked'
+                    : bookingStatus === 'cancelled'
+                      ? 'Previously booked'
+                      : !isBookable
+                        ? 'Unavailable'
+                        : available === 0
+                          ? 'Sold out'
+                          : 'Book event'}
               </button>
               {canCancel && (
                 <button className="destructive-button" type="button" onClick={handleCancelEvent} disabled={cancelling || submitting}>
@@ -2184,7 +2233,11 @@ function EventsPage({
       setError(null)
 
       try {
-        const loadEvents = eventView === 'drafts' ? listDraftEvents : listEvents
+        const loadEvents = eventView === 'drafts'
+          ? listDraftEvents
+          : eventView === 'completed'
+            ? listCompletedEvents
+            : listEvents
         const result = await loadEvents({
           tokens: tokensRef.current,
           page,
@@ -2269,6 +2322,7 @@ function EventsPage({
                   Number(event.tickets_available),
                   remainingTickets,
                 ),
+                current_user_booking_status: 'confirmed',
               }
             : event,
         ),
@@ -2282,6 +2336,7 @@ function EventsPage({
               Number(current.tickets_available),
               remainingTickets,
             ),
+            current_user_booking_status: 'confirmed',
           }
         : current,
     )
@@ -2352,16 +2407,26 @@ function EventsPage({
         <div className="events-intro">
           <div>
             <p className="eyebrow">
-              {eventView === 'drafts' ? 'Event management' : 'Upcoming experiences'}
+              {eventView === 'drafts'
+                ? 'Event management'
+                : eventView === 'completed'
+                  ? 'Past experiences'
+                  : 'Upcoming experiences'}
             </p>
             <h1 id="events-title">
-              {eventView === 'drafts' ? 'Draft events' : 'Explore events'}
+              {eventView === 'drafts'
+                ? 'Draft events'
+                : eventView === 'completed'
+                  ? 'Completed events'
+                  : 'Explore events'}
             </h1>
             <p>
               {eventView === 'drafts'
                 ? role === 'admin'
                   ? 'Review unpublished events from every organizer.'
                   : 'Finish and publish the events you are preparing.'
+                : eventView === 'completed'
+                  ? 'Browse events that have already taken place.'
                 : 'Find something worth showing up for.'}
             </p>
           </div>
@@ -2370,22 +2435,24 @@ function EventsPage({
               {eventPage.total_items}{' '}
               {eventView === 'drafts'
                 ? eventPage.total_items === 1 ? 'draft event' : 'draft events'
+                : eventView === 'completed'
+                  ? eventPage.total_items === 1 ? 'past event' : 'past events'
                 : `${eventPage.total_items === 1 ? 'event' : 'events'} available`}
             </p>
           )}
         </div>
 
-        {canViewDrafts && (
-          <div className="event-view-tabs" role="tablist" aria-label="Event views">
-            <button
-              className={eventView === 'published' ? 'event-view-tab-active' : ''}
-              type="button"
-              role="tab"
-              aria-selected={eventView === 'published'}
-              onClick={() => changeEventView('published')}
-            >
-              Published events
-            </button>
+        <div className="event-view-tabs" role="tablist" aria-label="Event views">
+          <button
+            className={eventView === 'published' ? 'event-view-tab-active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={eventView === 'published'}
+            onClick={() => changeEventView('published')}
+          >
+            Published events
+          </button>
+          {canViewDrafts && (
             <button
               className={eventView === 'drafts' ? 'event-view-tab-active' : ''}
               type="button"
@@ -2395,8 +2462,17 @@ function EventsPage({
             >
               Draft events
             </button>
-          </div>
-        )}
+          )}
+          <button
+            className={eventView === 'completed' ? 'event-view-tab-active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={eventView === 'completed'}
+            onClick={() => changeEventView('completed')}
+          >
+            Past events
+          </button>
+        </div>
 
         <div className="event-filters" aria-label="Filter events">
           <div className="event-category-filter">
@@ -2470,6 +2546,8 @@ function EventsPage({
                 ? 'No events match these filters'
                 : eventView === 'drafts'
                   ? 'No draft events'
+                  : eventView === 'completed'
+                    ? 'No completed events yet'
                   : 'No upcoming events yet'}
             </h2>
             <p>
@@ -2479,6 +2557,8 @@ function EventsPage({
                   ? role === 'admin'
                     ? 'There are no unpublished events to review.'
                     : 'Events saved as drafts will appear here.'
+                  : eventView === 'completed'
+                    ? 'Completed events will appear here after they have taken place.'
                   : 'Published events will appear here as soon as they are available.'}
             </p>
           </div>
@@ -3668,6 +3748,186 @@ function ReviewsPage({
   )
 }
 
+function validateOrganizedEventBookingGroups(payload) {
+  return (
+    Array.isArray(payload) &&
+    payload.every(
+      (group) =>
+        typeof group?.event_id === 'string' &&
+        typeof group.event_title === 'string' &&
+        ['draft', 'published', 'cancelled', 'completed'].includes(
+          group.event_status,
+        ) &&
+        typeof group.event_venue === 'string' &&
+        typeof group.event_datetime === 'string' &&
+        Number.isInteger(group.total_tickets) &&
+        Number.isInteger(group.tickets_available) &&
+        Array.isArray(group.bookings) &&
+        group.bookings.every(
+          (booking) =>
+            typeof booking?.id === 'string' &&
+            typeof booking.user_id === 'string' &&
+            typeof booking.attendee_name === 'string' &&
+            typeof booking.attendee_email === 'string' &&
+            Number.isInteger(booking.quantity) &&
+            booking.quantity > 0 &&
+            ['confirmed', 'cancelled'].includes(booking.status) &&
+            typeof booking.booked_at === 'string' &&
+            (booking.cancelled_at === null ||
+              typeof booking.cancelled_at === 'string'),
+        ),
+    )
+  )
+}
+
+function OrganizedEventBookingsPage({
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const {
+    data: bookingGroups,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({
+    tokens,
+    onSessionExpired,
+    onTokensChanged,
+    load: listOrganizedEventBookings,
+    resource: "your events' bookings",
+  })
+  const validGroups = bookingGroups &&
+    validateOrganizedEventBookingGroups(bookingGroups)
+    ? bookingGroups
+    : null
+  const totalBookings = validGroups?.reduce(
+    (total, group) => total + group.bookings.length,
+    0,
+  ) || 0
+
+  if (!loading && bookingGroups && !validGroups) {
+    return (
+      <section className="events-content" aria-labelledby="event-bookings-title">
+        <ResourceError
+          title="Event bookings could not be loaded"
+          message="The server returned an invalid event booking response."
+          onRetry={retry}
+        />
+      </section>
+    )
+  }
+
+  return (
+    <section
+      className="events-content managed-bookings-content"
+      aria-labelledby="event-bookings-title"
+    >
+      <div className="events-intro reviews-intro">
+        <div>
+          <p className="eyebrow">Attendee management</p>
+          <h1 id="event-bookings-title">My event&apos;s bookings</h1>
+          <p>See every reservation grouped under the event it belongs to.</p>
+        </div>
+        {!loading && validGroups && (
+          <div className="reviews-summary">
+            <span>{validGroups.length} event{validGroups.length === 1 ? '' : 's'}</span>
+            <strong>{totalBookings} booking{totalBookings === 1 ? '' : 's'}</strong>
+            <button type="button" onClick={retry}>Refresh</button>
+          </div>
+        )}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Event bookings could not be loaded"
+          message={error}
+          onRetry={retry}
+        />
+      ) : loading ? (
+        <div className="managed-booking-groups" aria-label="Loading event bookings" aria-busy="true">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div className="review-group review-group-skeleton skeleton-block" key={index} />
+          ))}
+        </div>
+      ) : validGroups.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No event bookings yet</h2>
+          <p>Bookings will appear here under the event they belong to.</p>
+        </div>
+      ) : (
+        <div className="managed-booking-groups">
+          {validGroups.map((group) => {
+            const confirmedBookings = group.bookings.filter(
+              (booking) => booking.status === 'confirmed',
+            )
+            const reservedTickets = confirmedBookings.reduce(
+              (total, booking) => total + booking.quantity,
+              0,
+            )
+
+            return (
+              <section
+                className="review-group managed-booking-group"
+                aria-labelledby={`bookings-event-${group.event_id}`}
+                key={group.event_id}
+              >
+                <header className="review-group-header managed-booking-group-header">
+                  <div>
+                    <div className="review-event-title-line">
+                      <h2 id={`bookings-event-${group.event_id}`}>{group.event_title}</h2>
+                      <span className={`review-event-status review-event-status-${group.event_status}`}>
+                        {group.event_status}
+                      </span>
+                    </div>
+                    <p>{formatDateTime(group.event_datetime)} · {group.event_venue}</p>
+                  </div>
+                  <div className="managed-booking-group-summary">
+                    <strong>{group.bookings.length} booking{group.bookings.length === 1 ? '' : 's'}</strong>
+                    <span>{reservedTickets} active ticket{reservedTickets === 1 ? '' : 's'}</span>
+                  </div>
+                </header>
+
+                <div className="managed-booking-list">
+                  {group.bookings.map((booking) => (
+                    <article className="managed-booking-card" key={booking.id}>
+                      <div className="managed-booking-avatar" aria-hidden="true">
+                        {booking.attendee_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="managed-booking-attendee">
+                        <div>
+                          <strong>{booking.attendee_name}</strong>
+                          <span className={`status-badge status-${booking.status}`}>
+                            {booking.status}
+                          </span>
+                        </div>
+                        <a href={`mailto:${booking.attendee_email}`}>{booking.attendee_email}</a>
+                        <small title={booking.id}>Booking #{shortId(booking.id)}</small>
+                      </div>
+                      <div className="managed-booking-time">
+                        <span>Booked</span>
+                        <strong>{formatDateTime(booking.booked_at)}</strong>
+                        {booking.cancelled_at && (
+                          <small>Cancelled {formatDateTime(booking.cancelled_at)}</small>
+                        )}
+                      </div>
+                      <div className="managed-booking-quantity">
+                        <span>Tickets</span>
+                        <strong>{booking.quantity}</strong>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function ProfileModal({
   tokens,
   profile,
@@ -4847,6 +5107,7 @@ function AuthVisual({ view }) {
 const APP_PAGES = [
   'events',
   'bookings',
+  'event-bookings',
   'reviews',
   'notifications',
   'users',
@@ -5157,9 +5418,11 @@ function App() {
   const currentUserId = typeof claims?.sub === 'string' ? claims.sub : null
   const isAdminPage = ['users', 'logs'].includes(appPage)
   const isReviewPage = appPage === 'reviews'
+  const isEventBookingsPage = appPage === 'event-bookings'
   const isRestrictedPage =
     (isAdminPage && role !== 'admin') ||
-    (isReviewPage && !['organizer', 'admin'].includes(role))
+    ((isReviewPage || isEventBookingsPage) &&
+      !['organizer', 'admin'].includes(role))
   const resolvedPage = isRestrictedPage ? 'events' : appPage
 
   function handleEventCreated(event) {
@@ -5198,6 +5461,7 @@ function App() {
         />
       ),
       bookings: <BookingsPage {...pageProps} />,
+      'event-bookings': <OrganizedEventBookingsPage {...pageProps} />,
       reviews: <ReviewsPage {...pageProps} role={role} />,
       notifications: (
         <NotificationsPage

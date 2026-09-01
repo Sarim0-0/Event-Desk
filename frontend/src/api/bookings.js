@@ -14,6 +14,10 @@ export function listUserBookings({ tokens, userId, page = 1 }) {
   })
 }
 
+export function listOrganizedEventBookings({ tokens }) {
+  return authenticatedRequest('/bookings/organized-events', { tokens })
+}
+
 export function createBooking({ tokens, eventId, quantity }) {
   return authenticatedRequest('/bookings', {
     tokens,

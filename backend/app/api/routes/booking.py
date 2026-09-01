@@ -7,21 +7,26 @@ from app.api.dependencies import (
     CurrentUser,
     DatabaseSession,
     require_own_or_any_permission,
+    require_permission,
 )
 from app.core.permissions import (
     CANCEL_ANY_BOOKING,
     CANCEL_OWN_BOOKING,
+    VIEW_OWN_EVENT_BOOKINGS,
 )
 from app.models.enums import NotificationType, UserRole
+from app.models.user import User
 from app.schemas.booking import (
     BookingCreate,
     BookingListQuery,
     BookingResponse,
+    OrganizedEventBookingsResponse,
     PaginatedBookingsResponse,
 )
 from app.services.booking import (
     cancel_booking,
     create_booking,
+    list_organized_event_bookings,
     list_own_bookings,
 )
 from app.tasks.event_availability import (
@@ -45,6 +50,22 @@ async def list_own_bookings_endpoint(
     session: DatabaseSession,
 ) -> PaginatedBookingsResponse:
     return await list_own_bookings(session, current_user, query)
+
+
+@router.get(
+    "/organized-events",
+    response_model=list[OrganizedEventBookingsResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_organized_event_bookings",
+)
+async def list_organized_event_bookings_endpoint(
+    current_user: Annotated[
+        User,
+        Depends(require_permission(VIEW_OWN_EVENT_BOOKINGS)),
+    ],
+    session: DatabaseSession,
+) -> list[OrganizedEventBookingsResponse]:
+    return await list_organized_event_bookings(session, current_user)
 
 
 @router.post(

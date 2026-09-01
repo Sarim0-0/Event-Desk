@@ -22,6 +22,8 @@ from app.schemas.booking import (
     BookingCreate,
     BookingListQuery,
     BookingResponse,
+    ManagedEventBookingResponse,
+    OrganizedEventBookingsResponse,
     PaginatedBookingsResponse,
 )
 from app.services import audit as audit_service
@@ -91,6 +93,51 @@ async def _list_bookings_for_user(
         total_items=total_items,
         total_pages=total_pages,
     )
+
+
+async def list_organized_event_bookings(
+    session: AsyncSession,
+    current_user: User,
+) -> list[OrganizedEventBookingsResponse]:
+    """Group attendee Bookings under Events owned by the current User."""
+
+    bookings = await booking_repository.list_bookings_for_organized_events(
+        session,
+        organizer_id=current_user.id,
+    )
+    groups: dict[UUID, OrganizedEventBookingsResponse] = {}
+
+    for booking in bookings:
+        event = booking.event
+        attendee = booking.user
+        group = groups.get(event.id)
+        if group is None:
+            group = OrganizedEventBookingsResponse(
+                event_id=event.id,
+                event_title=event.title,
+                event_status=event.status,
+                event_venue=event.venue,
+                event_datetime=event.event_datetime,
+                total_tickets=event.total_tickets,
+                tickets_available=event.tickets_available,
+                bookings=[],
+            )
+            groups[event.id] = group
+
+        group.bookings.append(
+            ManagedEventBookingResponse(
+                id=booking.id,
+                user_id=booking.user_id,
+                attendee_name=attendee.name,
+                attendee_email=attendee.email,
+                quantity=booking.quantity,
+                status=booking.status,
+                booked_at=booking.booked_at,
+                cancelled_at=booking.cancelled_at,
+            )
+        )
+
+    return list(groups.values())
 
 
 async def create_booking(

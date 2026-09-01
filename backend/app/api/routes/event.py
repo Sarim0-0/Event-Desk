@@ -30,6 +30,7 @@ from app.services.event import (
     cancel_event,
     create_event,
     list_categories,
+    list_completed_events,
     list_draft_events,
     list_events,
     list_tags,
@@ -54,10 +55,10 @@ router = APIRouter(prefix="/events", tags=["Events"])
 )
 async def list_events_endpoint(
     query: Annotated[EventListQuery, Query()],
-    _current_user: CurrentUser,
+    current_user: CurrentUser,
     session: DatabaseSession,
 ) -> PaginatedEventsResponse:
-    return await list_events(session, query)
+    return await list_events(session, current_user, query)
 
 
 @router.get(
@@ -84,6 +85,20 @@ async def list_tags_endpoint(
     session: DatabaseSession,
 ) -> list[TagResponse]:
     return await list_tags(session)
+
+
+@router.get(
+    "/completed",
+    response_model=PaginatedEventsResponse,
+    status_code=status.HTTP_200_OK,
+    name="list_completed_events",
+)
+async def list_completed_events_endpoint(
+    query: Annotated[EventListQuery, Query()],
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> PaginatedEventsResponse:
+    return await list_completed_events(session, current_user, query)
 
 
 @router.get(

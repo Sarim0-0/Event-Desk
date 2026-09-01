@@ -11,7 +11,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.models.enums import EventStatus
+from app.models.enums import BookingStatus, EventStatus
 
 
 EVENTS_PER_PAGE = 6
@@ -196,6 +196,7 @@ class EventResponse(BaseModel):
     category_id: UUID | None
     tag_ids: list[UUID]
     status: EventStatus
+    current_user_booking_status: BookingStatus | None = None
     created_at: datetime
     updated_at: datetime
 

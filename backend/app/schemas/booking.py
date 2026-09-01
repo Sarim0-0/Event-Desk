@@ -58,3 +58,29 @@ class PaginatedBookingsResponse(BaseModel):
     page_size: Literal[5] = BOOKINGS_PER_PAGE
     total_items: int = Field(ge=0)
     total_pages: int = Field(ge=0)
+
+
+class ManagedEventBookingResponse(BaseModel):
+    """One attendee Booking shown to the Event's organizer."""
+
+    id: UUID
+    user_id: UUID
+    attendee_name: str
+    attendee_email: str
+    quantity: int
+    status: BookingStatus
+    booked_at: datetime
+    cancelled_at: datetime | None
+
+
+class OrganizedEventBookingsResponse(BaseModel):
+    """Bookings grouped under one Event owned by the current User."""
+
+    event_id: UUID
+    event_title: str
+    event_status: EventStatus
+    event_venue: str
+    event_datetime: datetime
+    total_tickets: int
+    tickets_available: int
+    bookings: list[ManagedEventBookingResponse]

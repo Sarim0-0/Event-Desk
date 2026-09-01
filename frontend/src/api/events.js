@@ -34,6 +34,19 @@ export function listDraftEvents({
   return authenticatedRequest(`/events/drafts?${query}`, { tokens })
 }
 
+export function listCompletedEvents({
+  tokens,
+  page = 1,
+  categoryId = '',
+  tagIds = [],
+}) {
+  const query = new URLSearchParams({ page: String(page) })
+  if (categoryId) query.set('category_id', categoryId)
+  tagIds.forEach((tagId) => query.append('tag_ids', tagId))
+
+  return authenticatedRequest(`/events/completed?${query}`, { tokens })
+}
+
 export function createEvent({ tokens, event }) {
   return authenticatedRequest('/events', {
     tokens,

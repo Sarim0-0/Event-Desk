@@ -1,9 +1,10 @@
+from collections.abc import Collection
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.booking import Booking
 from app.models.enums import BookingStatus
@@ -43,6 +44,51 @@ async def list_bookings_by_user(
     )
     bookings = await session.scalars(statement)
     return list(bookings.all())
+
+
+async def get_user_booking_statuses_for_events(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    event_ids: Collection[UUID],
+) -> dict[UUID, BookingStatus]:
+    """Return the current User's Booking status for the supplied Events."""
+
+    if not event_ids:
+        return {}
+
+    statement = select(Booking.event_id, Booking.status).where(
+        Booking.user_id == user_id,
+        Booking.event_id.in_(event_ids),
+    )
+    rows = (await session.execute(statement)).all()
+    return {row.event_id: row.status for row in rows}
+
+
+async def list_bookings_for_organized_events(
+    session: AsyncSession,
+    *,
+    organizer_id: UUID,
+) -> list[Booking]:
+    """Load Bookings belonging only to Events owned by one organizer."""
+
+    statement = (
+        select(Booking)
+        .join(Booking.event)
+        .options(
+            joinedload(Booking.event),
+            joinedload(Booking.user),
+        )
+        .where(Event.organizer_id == organizer_id)
+        .order_by(
+            Event.event_datetime.desc(),
+            Event.id,
+            Booking.booked_at.desc(),
+            Booking.id.desc(),
+        )
+    )
+    bookings = await session.scalars(statement)
+    return list(bookings.unique().all())
 
 
 async def get_event_for_booking_for_update(

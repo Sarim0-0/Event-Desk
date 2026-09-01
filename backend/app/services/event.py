@@ -8,6 +8,7 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.enums import AuditAction, AuditEntityType, EventStatus
 from app.models.event import Tag
 from app.models.user import User
+from app.repositories import booking as booking_repository
 from app.repositories import event as event_repository
 from app.schemas.event import (
     EVENTS_PER_PAGE,
@@ -25,6 +26,7 @@ from app.services import audit as audit_service
 
 async def list_events(
     session: AsyncSession,
+    current_user: User,
     query: EventListQuery,
 ) -> PaginatedEventsResponse:
     """Return one read-only page of visible, filtered Events."""
@@ -39,6 +41,13 @@ async def list_events(
         page=query.page,
         category_id=query.category_id,
         tag_ids=query.tag_ids,
+    )
+    booking_statuses = (
+        await booking_repository.get_user_booking_statuses_for_events(
+            session,
+            user_id=current_user.id,
+            event_ids=[event.id for event in events],
+        )
     )
 
     items = [
@@ -56,6 +65,7 @@ async def list_events(
             category_id=event.category_id,
             tag_ids=[tag.id for tag in event.tags],
             status=event.status,
+            current_user_booking_status=booking_statuses.get(event.id),
             created_at=event.created_at,
             updated_at=event.updated_at,
         )
@@ -65,6 +75,61 @@ async def list_events(
 
     return PaginatedEventsResponse(
         items=items,
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
+
+
+async def list_completed_events(
+    session: AsyncSession,
+    current_user: User,
+    query: EventListQuery,
+) -> PaginatedEventsResponse:
+    """Return one filtered page of completed Events for historical viewing."""
+
+    total_items = await event_repository.count_completed_events(
+        session,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    events = await event_repository.list_completed_events(
+        session,
+        page=query.page,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    booking_statuses = (
+        await booking_repository.get_user_booking_statuses_for_events(
+            session,
+            user_id=current_user.id,
+            event_ids=[event.id for event in events],
+        )
+    )
+    total_pages = (total_items + EVENTS_PER_PAGE - 1) // EVENTS_PER_PAGE
+
+    return PaginatedEventsResponse(
+        items=[
+            EventResponse(
+                id=event.id,
+                organizer_id=event.organizer_id,
+                organizer_name=event.organizer.name,
+                title=event.title,
+                description=event.description,
+                venue=event.venue,
+                event_datetime=event.event_datetime,
+                ticket_price=event.ticket_price,
+                total_tickets=event.total_tickets,
+                tickets_available=event.tickets_available,
+                category_id=event.category_id,
+                tag_ids=[tag.id for tag in event.tags],
+                status=event.status,
+                current_user_booking_status=booking_statuses.get(event.id),
+                created_at=event.created_at,
+                updated_at=event.updated_at,
+            )
+            for event in events
+        ],
         page=query.page,
         total_items=total_items,
         total_pages=total_pages,
