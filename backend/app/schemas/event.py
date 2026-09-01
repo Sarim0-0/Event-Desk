@@ -185,6 +185,7 @@ class EventResponse(BaseModel):
 
     id: UUID
     organizer_id: UUID
+    organizer_name: str
     title: str
     description: str
     venue: str

@@ -97,6 +97,7 @@ async def list_visible_events(
         select(Event)
         .options(
             selectinload(Event.category),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(
@@ -142,6 +143,7 @@ async def list_draft_events(
         select(Event)
         .options(
             selectinload(Event.category),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(
@@ -189,6 +191,7 @@ async def get_event_for_update(
         .options(
             selectinload(Event.category),
             selectinload(Event.event_tags),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(
@@ -209,6 +212,7 @@ async def get_event_for_cancellation_for_update(
         .options(
             selectinload(Event.category),
             selectinload(Event.event_tags),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(Event.id == event_id)

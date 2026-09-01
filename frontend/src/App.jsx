@@ -16,7 +16,12 @@ import {
   listTags,
   updateEvent,
 } from './api/events.js'
-import { cancelBooking, createBooking, listBookings } from './api/bookings.js'
+import {
+  cancelBooking,
+  createBooking,
+  listBookings,
+  listUserBookings,
+} from './api/bookings.js'
 import {
   createReview,
   createReviewReply,
@@ -683,6 +688,12 @@ function validateEventPage(payload) {
   return (
     payload &&
     Array.isArray(payload.items) &&
+    payload.items.every(
+      (event) =>
+        typeof event?.organizer_id === 'string' &&
+        typeof event.organizer_name === 'string' &&
+        event.organizer_name.trim().length > 0,
+    ) &&
     Number.isInteger(payload.page) &&
     payload.page >= 1 &&
     payload.page_size === 6 &&
@@ -720,6 +731,15 @@ function EventMetaIcon({ type }) {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 010 4v2a2 2 0 01-2 2H5a2 2 0 00-2-2v-2a2 2 0 010-4V8zM13 7v2M13 11v2M13 15v2" />
+      </svg>
+    )
+  }
+
+  if (type === 'organizer') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5 20a7 7 0 0114 0" />
       </svg>
     )
   }
@@ -769,6 +789,10 @@ function EventCard({ event, onSelect, index, categoryName, isOwned }) {
         <p className="event-description">{event.description}</p>
 
         <div className="event-meta">
+          <span>
+            <EventMetaIcon type="organizer" />
+            Organized by {event.organizer_name}
+          </span>
           <span>
             <EventMetaIcon type="calendar" />
             {date.full} at {formatEventTime(event.event_datetime)}
@@ -1808,6 +1832,7 @@ function EventDetailsModal({
         <div className="event-detail-facts">
           <span><EventMetaIcon type="calendar" /><strong>{date.full}</strong><small>{formatEventTime(event.event_datetime)}</small></span>
           <span><EventMetaIcon type="location" /><strong>{event.venue}</strong><small>Venue</small></span>
+          <span><EventMetaIcon type="organizer" /><strong>{event.organizer_name}</strong><small>Organizer</small></span>
           <span><EventMetaIcon type="ticket" /><strong>{available} of {total}</strong><small>Tickets remaining</small></span>
         </div>
 
@@ -2814,6 +2839,104 @@ function ReviewModal({
   )
 }
 
+function canCancelListedBooking(booking) {
+  return (
+    booking.status === 'confirmed' &&
+    !['cancelled', 'completed'].includes(booking.event_status)
+  )
+}
+
+function getBookingEventNotice(eventStatus) {
+  if (eventStatus === 'draft') {
+    return 'The organizer has moved this event back to draft.'
+  }
+  if (eventStatus === 'cancelled') {
+    return 'This event has been cancelled. The booking is retained for your records.'
+  }
+  if (eventStatus === 'completed') {
+    return 'This event has been completed. The booking is retained for your records.'
+  }
+  return null
+}
+
+function BookingDetailsModal({ booking, onClose, bookingOwnerName = '' }) {
+  const date = formatEventDate(booking.event_datetime)
+  const eventNotice = getBookingEventNotice(booking.event_status)
+
+  return (
+    <Modal
+      titleId="booking-detail-title"
+      onClose={onClose}
+      className="booking-detail-modal"
+    >
+      <div className="modal-heading booking-detail-heading">
+        <p className="eyebrow">Booking details</p>
+        <h1 id="booking-detail-title">{booking.event_title}</h1>
+        <p>
+          {bookingOwnerName
+            ? `Reservation held by ${bookingOwnerName}.`
+            : 'Your reservation and event information.'}
+        </p>
+      </div>
+
+      <div className="booking-detail-statuses">
+        <span className={`status-badge status-${booking.status}`}>
+          {booking.status === 'confirmed'
+            ? 'Booking confirmed'
+            : 'Booking cancelled'}
+        </span>
+        {booking.event_status !== 'published' && (
+          <span className={`event-state-badge event-state-${booking.event_status}`}>
+            Event {booking.event_status}
+          </span>
+        )}
+      </div>
+
+      {eventNotice && (
+        <p className={`booking-detail-notice booking-detail-notice-${booking.event_status}`}>
+          {eventNotice}
+        </p>
+      )}
+
+      <div className="booking-detail-facts">
+        <div>
+          <EventMetaIcon type="calendar" />
+          <span>Starts</span>
+          <strong>{date.full} at {formatEventTime(booking.event_datetime)}</strong>
+        </div>
+        <div>
+          <EventMetaIcon type="location" />
+          <span>Venue</span>
+          <strong>{booking.event_venue}</strong>
+        </div>
+        <div>
+          <EventMetaIcon type="organizer" />
+          <span>Organizer</span>
+          <strong>{booking.event_organizer_name}</strong>
+        </div>
+        <div>
+          <EventMetaIcon type="ticket" />
+          <span>Tickets booked</span>
+          <strong>{booking.quantity}</strong>
+        </div>
+      </div>
+
+      <div className="booking-detail-record">
+        <span>Booked</span>
+        <strong>{formatDateTime(booking.booked_at)}</strong>
+        {booking.cancelled_at && (
+          <>
+            <span>Booking cancelled</span>
+            <strong>{formatDateTime(booking.cancelled_at)}</strong>
+          </>
+        )}
+        <span>Booking reference</span>
+        <strong>{booking.id}</strong>
+      </div>
+    </Modal>
+  )
+}
+
 function validateBookingPage(payload) {
   return (
     payload &&
@@ -2821,6 +2944,11 @@ function validateBookingPage(payload) {
     payload.items.every(
       (booking) =>
         typeof booking?.event_title === 'string' &&
+        typeof booking.event_venue === 'string' &&
+        typeof booking.event_datetime === 'string' &&
+        !Number.isNaN(new Date(booking.event_datetime).getTime()) &&
+        typeof booking.event_organizer_name === 'string' &&
+        booking.event_organizer_name.trim().length > 0 &&
         ['draft', 'published', 'cancelled', 'completed'].includes(
           booking.event_status,
         ) &&
@@ -2854,6 +2982,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
   const [retryCount, setRetryCount] = useState(0)
   const [cancellingBookingId, setCancellingBookingId] = useState(null)
   const [bookingToCancel, setBookingToCancel] = useState(null)
+  const [selectedBooking, setSelectedBooking] = useState(null)
   const [reviewBooking, setReviewBooking] = useState(null)
   const [actionError, setActionError] = useState(null)
   const tokensRef = useRef(tokens)
@@ -2909,7 +3038,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
   }
 
   function requestBookingCancellation(booking) {
-    if (booking.status === 'cancelled' || cancellingBookingId) return
+    if (!canCancelListedBooking(booking) || cancellingBookingId) return
 
     setActionError(null)
     setBookingToCancel(booking)
@@ -2917,7 +3046,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
 
   async function handleCancelBooking() {
     const booking = bookingToCancel
-    if (!booking || booking.status === 'cancelled' || cancellingBookingId) return
+    if (!booking || !canCancelListedBooking(booking) || cancellingBookingId) return
 
     setCancellingBookingId(booking.id)
     setActionError(null)
@@ -3020,35 +3149,53 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
           <div className="booking-list">
             {bookingPage.items.map((booking) => (
               <article className="booking-card" key={booking.id}>
-                <div className="booking-icon"><AppIcon type="bookings" /></div>
-                <div className="booking-main">
-                  <div className="booking-heading">
-                    <h2 title={booking.event_id}>
-                      {booking.event_title || `Event ${shortId(booking.event_id)}`}
-                    </h2>
-                    <span className={`status-badge status-${booking.status}`}>
-                      {booking.status === 'confirmed'
-                        ? 'Booking confirmed'
-                        : 'Booking cancelled'}
-                    </span>
-                    {booking.event_status === 'draft' && (
-                      <span className="event-state-badge event-state-draft">
-                        Event is draft
+                <button
+                  className="booking-details-trigger"
+                  type="button"
+                  onClick={() => setSelectedBooking(booking)}
+                  aria-label={`View booking details for ${booking.event_title}`}
+                >
+                  <div className="booking-icon"><AppIcon type="bookings" /></div>
+                  <div className="booking-main">
+                    <div className="booking-heading">
+                      <h2 title={booking.event_id}>
+                        {booking.event_title || `Event ${shortId(booking.event_id)}`}
+                      </h2>
+                      <span className={`status-badge status-${booking.status}`}>
+                        {booking.status === 'confirmed'
+                          ? 'Booking confirmed'
+                          : 'Booking cancelled'}
                       </span>
+                      {booking.event_status !== 'published' && (
+                        <span className={`event-state-badge event-state-${booking.event_status}`}>
+                          Event {booking.event_status}
+                        </span>
+                      )}
+                    </div>
+                    <div className="booking-event-summary">
+                      <span>{formatDateTime(booking.event_datetime)}</span>
+                      <span>{booking.event_venue}</span>
+                      <span>Organized by {booking.event_organizer_name}</span>
+                    </div>
+                    {getBookingEventNotice(booking.event_status) && (
+                      <p className={`booking-event-notice booking-event-notice-${booking.event_status}`}>
+                        {getBookingEventNotice(booking.event_status)}
+                      </p>
+                    )}
+                    <small>
+                      Booked {formatDateTime(booking.booked_at)} · View details →
+                    </small>
+                    {booking.cancelled_at && (
+                      <small className="booking-cancelled">
+                        Booking cancelled {formatDateTime(booking.cancelled_at)}
+                      </small>
                     )}
                   </div>
-                  <p>Booked {formatDateTime(booking.booked_at)}</p>
-                  {booking.event_status === 'draft' && (
-                    <p className="booking-event-notice">
-                      The organizer has moved this event back to draft.
-                    </p>
-                  )}
-                  <small title={booking.id}>Booking #{shortId(booking.id)}</small>
-                </div>
-                <div className="booking-quantity">
-                  <span>Tickets</span>
-                  <strong>{booking.quantity}</strong>
-                </div>
+                  <div className="booking-quantity">
+                    <span>Tickets</span>
+                    <strong>{booking.quantity}</strong>
+                  </div>
+                </button>
                 <div className="booking-actions">
                   {booking.review ? (
                     <button
@@ -3075,7 +3222,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                   ) : null}
                   {booking.status === 'cancelled' ? (
                     <span className="read-status-label">Cancelled</span>
-                  ) : (
+                  ) : canCancelListedBooking(booking) ? (
                     <button
                       className="destructive-button"
                       type="button"
@@ -3086,13 +3233,10 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                         ? 'Cancelling…'
                         : 'Cancel booking'}
                     </button>
+                  ) : (
+                    <span className="read-status-label">Cancellation unavailable</span>
                   )}
                 </div>
-                {booking.cancelled_at && (
-                  <p className="booking-cancelled">
-                    Cancelled {formatDateTime(booking.cancelled_at)}
-                  </p>
-                )}
               </article>
             ))}
           </div>
@@ -3103,6 +3247,12 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
             label="Booking"
           />
         </>
+      )}
+      {selectedBooking && (
+        <BookingDetailsModal
+          booking={selectedBooking}
+          onClose={() => setSelectedBooking(null)}
+        />
       )}
       {bookingToCancel && (
         <ConfirmationModal
@@ -3780,6 +3930,256 @@ function ProfileModal({
   )
 }
 
+function UserBookingsModal({
+  user,
+  tokens,
+  onClose,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [page, setPage] = useState(1)
+  const [bookingPage, setBookingPage] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [bookingToCancel, setBookingToCancel] = useState(null)
+  const [selectedBooking, setSelectedBooking] = useState(null)
+  const [cancellingBookingId, setCancellingBookingId] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadUserBookings() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listUserBookings({
+          tokens: tokensRef.current,
+          userId: user.id,
+          page,
+        })
+        if (!validateBookingPage(result.data)) {
+          throw new Error('Invalid paginated booking response.')
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setBookingPage(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, `${user.name}'s bookings`))
+        setLoading(false)
+      }
+    }
+
+    loadUserBookings()
+    return () => { cancelled = true }
+  }, [onSessionExpired, onTokensChanged, page, retryCount, user.id, user.name])
+
+  function closeWhenIdle() {
+    if (!bookingToCancel && !cancellingBookingId) onClose()
+  }
+
+  function changePage(nextPage) {
+    if (
+      loading ||
+      !bookingPage ||
+      nextPage < 1 ||
+      nextPage > bookingPage.total_pages
+    ) return
+
+    setPage(nextPage)
+    setActionError(null)
+  }
+
+  async function handleCancelBooking() {
+    const booking = bookingToCancel
+    if (!booking || !canCancelListedBooking(booking) || cancellingBookingId) return
+
+    setCancellingBookingId(booking.id)
+    setActionError(null)
+    try {
+      const result = await cancelBooking({
+        tokens: tokensRef.current,
+        bookingId: booking.id,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      setBookingPage((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === booking.id ? result.data : item,
+              ),
+            }
+          : current,
+      )
+      setBookingToCancel(null)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setBookingToCancel(null)
+      setActionError(
+        requestError instanceof ApiError && typeof requestError.payload?.detail === 'string'
+          ? requestError.payload.detail
+          : 'We could not cancel this booking. Please try again.',
+      )
+    } finally {
+      setCancellingBookingId(null)
+    }
+  }
+
+  if (selectedBooking) {
+    return (
+      <BookingDetailsModal
+        booking={selectedBooking}
+        bookingOwnerName={user.name}
+        onClose={() => setSelectedBooking(null)}
+      />
+    )
+  }
+
+  return (
+    <>
+      <Modal
+        titleId="user-bookings-title"
+        onClose={closeWhenIdle}
+        className="form-modal admin-bookings-modal"
+      >
+        <div className="modal-heading admin-bookings-heading">
+          <p className="eyebrow">Booking management</p>
+          <h1 id="user-bookings-title">{user.name}&apos;s bookings</h1>
+          <p>{user.email} · {user.role} · {user.is_active ? 'Active' : 'Inactive'}</p>
+        </div>
+        <Alert>{actionError}</Alert>
+
+        {error ? (
+          <ResourceError
+            title="Bookings could not be loaded"
+            message={error}
+            onRetry={() => setRetryCount((count) => count + 1)}
+          />
+        ) : loading ? (
+          <div className="admin-booking-list" aria-label="Loading user bookings" aria-busy="true">
+            {Array.from({ length: 3 }, (_, index) => (
+              <div className="admin-user-booking-card skeleton-block" key={index} />
+            ))}
+          </div>
+        ) : bookingPage.items.length === 0 ? (
+          <div className="admin-bookings-empty">
+            <span aria-hidden="true">◇</span>
+            <h2>No bookings</h2>
+            <p>This user has not booked any events.</p>
+          </div>
+        ) : (
+          <>
+            <div className="admin-bookings-summary">
+              <span>{bookingPage.total_items} total booking{bookingPage.total_items === 1 ? '' : 's'}</span>
+              <small>Eligible upcoming bookings can be cancelled. The user will be notified.</small>
+            </div>
+            <div className="admin-booking-list">
+              {bookingPage.items.map((booking) => (
+                <article className="admin-user-booking-card" key={booking.id}>
+                  <button
+                    className="admin-booking-details-trigger"
+                    type="button"
+                    onClick={() => setSelectedBooking(booking)}
+                    aria-label={`View booking details for ${booking.event_title}`}
+                  >
+                    <div className="admin-booking-main">
+                      <div className="booking-heading">
+                        <h2>{booking.event_title}</h2>
+                        <span className={`status-badge status-${booking.status}`}>
+                          {booking.status === 'confirmed' ? 'Confirmed' : 'Cancelled'}
+                        </span>
+                        {booking.event_status !== 'published' && (
+                          <span className={`event-state-badge event-state-${booking.event_status}`}>
+                            Event {booking.event_status}
+                          </span>
+                        )}
+                      </div>
+                      <p>{formatDateTime(booking.event_datetime)} · {booking.event_venue}</p>
+                      <p>Organized by {booking.event_organizer_name}</p>
+                      <small>Booked {formatDateTime(booking.booked_at)} · View details →</small>
+                      {booking.cancelled_at && (
+                        <small>Booking cancelled {formatDateTime(booking.cancelled_at)}</small>
+                      )}
+                    </div>
+                    <div className="admin-booking-ticket-count">
+                      <span>Tickets</span>
+                      <strong>{booking.quantity}</strong>
+                    </div>
+                  </button>
+                  {canCancelListedBooking(booking) ? (
+                    <button
+                      className="destructive-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setBookingToCancel(booking)
+                      }}
+                      disabled={Boolean(cancellingBookingId)}
+                    >
+                      Cancel booking
+                    </button>
+                  ) : booking.status === 'cancelled' ? (
+                    <span className="read-status-label">Already cancelled</span>
+                  ) : (
+                    <span className="read-status-label">Cancellation unavailable</span>
+                  )}
+                </article>
+              ))}
+            </div>
+            <Pagination
+              pageData={bookingPage}
+              loading={loading}
+              onChange={changePage}
+              label={`${user.name}'s booking`}
+            />
+          </>
+        )}
+
+        <div className="modal-actions admin-bookings-footer">
+          <button className="secondary-button" type="button" onClick={closeWhenIdle}>
+            Close
+          </button>
+        </div>
+      </Modal>
+
+      {bookingToCancel && (
+        <ConfirmationModal
+          title={`Cancel ${user.name}'s booking?`}
+          description={`This will cancel ${bookingToCancel.quantity} ticket${bookingToCancel.quantity === 1 ? '' : 's'} for ${bookingToCancel.event_title}. The tickets will be returned and ${user.name} will be notified.`}
+          confirmLabel="Cancel booking"
+          cancelLabel="Keep booking"
+          onClose={() => setBookingToCancel(null)}
+          onConfirm={handleCancelBooking}
+          submitting={cancellingBookingId === bookingToCancel.id}
+        />
+      )}
+    </>
+  )
+}
+
 function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
   const {
     data: users,
@@ -3797,6 +4197,7 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
   const [actionLoading, setActionLoading] = useState(null)
   const [actionError, setActionError] = useState(null)
   const [userToDeactivate, setUserToDeactivate] = useState(null)
+  const [selectedUser, setSelectedUser] = useState(null)
   const tokensRef = useRef(tokens)
 
   useEffect(() => {
@@ -3909,7 +4310,21 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
             <tbody>
               {users.map((user) => (
                 <tr key={user.id}>
-                  <td><strong>{user.name}</strong><span>{user.email}</span></td>
+                  <td>
+                    <button
+                      className="user-bookings-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setSelectedUser(user)
+                      }}
+                      aria-label={`View ${user.name}'s bookings`}
+                    >
+                      <strong>{user.name}</strong>
+                      <span>{user.email}</span>
+                      <small>View bookings →</small>
+                    </button>
+                  </td>
                   <td>
                     {user.role === 'admin' ? (
                       <span className="role-badge" title="Admin roles cannot be changed">
@@ -3965,6 +4380,15 @@ function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
           onClose={() => setUserToDeactivate(null)}
           onConfirm={handleDeactivate}
           submitting={actionLoading === `status-${userToDeactivate.id}`}
+        />
+      )}
+      {selectedUser && (
+        <UserBookingsModal
+          user={selectedUser}
+          tokens={tokens}
+          onClose={() => setSelectedUser(null)}
+          onSessionExpired={onSessionExpired}
+          onTokensChanged={onTokensChanged}
         />
       )}
     </section>

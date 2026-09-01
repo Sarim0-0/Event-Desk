@@ -12,7 +12,7 @@ from app.core.permissions import (
     CANCEL_ANY_BOOKING,
     CANCEL_OWN_BOOKING,
 )
-from app.models.enums import NotificationType
+from app.models.enums import NotificationType, UserRole
 from app.schemas.booking import (
     BookingCreate,
     BookingListQuery,
@@ -103,6 +103,10 @@ async def cancel_booking_endpoint(
         create_notification_in_background,
         notification_type=NotificationType.BOOKING_CANCELLED,
         related_booking_id=booking.id,
+        cancelled_by_admin=(
+            current_user.role.name == UserRole.ADMIN.value
+            and booking.user_id != current_user.id
+        ),
     )
     background_tasks.add_task(
         broadcast_event_availability_in_background,

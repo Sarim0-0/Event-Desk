@@ -29,6 +29,9 @@ class BookingResponse(BaseModel):
     user_id: UUID
     event_id: UUID
     event_title: str
+    event_venue: str
+    event_datetime: datetime
+    event_organizer_name: str
     event_status: EventStatus
     review: ReviewWithRepliesResponse | None
     quantity: int

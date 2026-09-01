@@ -6,6 +6,14 @@ export function listBookings({ tokens, page = 1 }) {
   return authenticatedRequest(`/bookings?${query}`, { tokens })
 }
 
+export function listUserBookings({ tokens, userId, page = 1 }) {
+  const query = new URLSearchParams({ page: String(page) })
+
+  return authenticatedRequest(`/users/${userId}/bookings?${query}`, {
+    tokens,
+  })
+}
+
 export function createBooking({ tokens, eventId, quantity }) {
   return authenticatedRequest('/bookings', {
     tokens,

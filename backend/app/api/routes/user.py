@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies import (
     CurrentUser,
@@ -9,6 +9,7 @@ from app.api.dependencies import (
     require_permission,
 )
 from app.core.permissions import (
+    CANCEL_ANY_BOOKING,
     CHANGE_USER_ROLE,
     CHANGE_USER_STATUS,
     VIEW_ALL_USERS,
@@ -20,6 +21,11 @@ from app.schemas.user import (
     UserResponse,
     UserRoleUpdate,
 )
+from app.schemas.booking import (
+    BookingListQuery,
+    PaginatedBookingsResponse,
+)
+from app.services.booking import list_user_bookings
 from app.services.user import (
     change_own_password,
     change_user_role,
@@ -46,6 +52,24 @@ async def list_all_users_endpoint(
     session: DatabaseSession,
 ) -> list[UserResponse]:
     return await list_all_users(session)
+
+
+@router.get(
+    "/{user_id}/bookings",
+    response_model=PaginatedBookingsResponse,
+    status_code=status.HTTP_200_OK,
+    name="list_user_bookings",
+)
+async def list_user_bookings_endpoint(
+    user_id: UUID,
+    query: Annotated[BookingListQuery, Query()],
+    current_user: Annotated[
+        User,
+        Depends(require_permission(CANCEL_ANY_BOOKING)),
+    ],
+    session: DatabaseSession,
+) -> PaginatedBookingsResponse:
+    return await list_user_bookings(session, user_id, query)
 
 
 @router.patch(

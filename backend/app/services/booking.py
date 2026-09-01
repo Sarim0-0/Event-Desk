@@ -16,6 +16,7 @@ from app.models.booking import Booking
 from app.models.event import Event
 from app.models.review import Review
 from app.repositories import booking as booking_repository
+from app.repositories import user as user_repository
 from app.schemas.booking import (
     BOOKINGS_PER_PAGE,
     BookingCreate,
@@ -33,13 +34,46 @@ async def list_own_bookings(
 ) -> PaginatedBookingsResponse:
     """Return one read-only page of the authenticated User's Bookings."""
 
+    return await _list_bookings_for_user(
+        session,
+        user_id=current_user.id,
+        query=query,
+    )
+
+
+async def list_user_bookings(
+    session: AsyncSession,
+    user_id: UUID,
+    query: BookingListQuery,
+) -> PaginatedBookingsResponse:
+    """Return one booking page for an Admin-selected User."""
+
+    target_user = await user_repository.get_user_by_id(session, user_id)
+    if target_user is None:
+        raise NotFoundError("The selected User does not exist.")
+
+    return await _list_bookings_for_user(
+        session,
+        user_id=target_user.id,
+        query=query,
+    )
+
+
+async def _list_bookings_for_user(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    query: BookingListQuery,
+) -> PaginatedBookingsResponse:
+    """Build the shared paginated Booking response for one User ID."""
+
     total_items = await booking_repository.count_bookings_by_user(
         session,
-        current_user.id,
+        user_id,
     )
     bookings = await booking_repository.list_bookings_by_user(
         session,
-        user_id=current_user.id,
+        user_id=user_id,
         page=query.page,
     )
     total_pages = (total_items + BOOKINGS_PER_PAGE - 1) // BOOKINGS_PER_PAGE
@@ -172,6 +206,16 @@ async def cancel_booking(
                 "You do not have permission to cancel this booking."
             )
 
+        if event.status is EventStatus.CANCELLED:
+            raise ConflictError(
+                "A booking for a cancelled event cannot be cancelled."
+            )
+
+        if event.status is EventStatus.COMPLETED:
+            raise ConflictError(
+                "A booking for a completed event cannot be cancelled."
+            )
+
         available_after_restoration = (
             event.tickets_available + booking.quantity
         )
@@ -231,6 +275,9 @@ def _booking_response(
         user_id=booking.user_id,
         event_id=booking.event_id,
         event_title=event.title,
+        event_venue=event.venue,
+        event_datetime=event.event_datetime,
+        event_organizer_name=event.organizer.name,
         event_status=event.status,
         review=review,
         quantity=booking.quantity,

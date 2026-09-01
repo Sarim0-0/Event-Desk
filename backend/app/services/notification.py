@@ -43,6 +43,10 @@ _NOTIFICATION_MESSAGE_TEMPLATES = {
     ),
 }
 
+_ADMIN_BOOKING_CANCELLATION_MESSAGE = (
+    'An administrator cancelled your booking for "{event_title}".'
+)
+
 
 async def list_notifications(
     session: AsyncSession,
@@ -145,6 +149,7 @@ async def create_notification(
     notification_type: NotificationType,
     related_booking_id: UUID | None = None,
     related_review_id: UUID | None = None,
+    cancelled_by_admin: bool = False,
 ) -> NotificationResponse:
     """Persist one trusted, server-created Notification."""
 
@@ -163,6 +168,7 @@ async def create_notification(
             message=build_notification_message(
                 notification_type,
                 event_title,
+                cancelled_by_admin=cancelled_by_admin,
             ),
             related_booking_id=related_booking_id,
             related_review_id=related_review_id,
@@ -282,8 +288,18 @@ async def _resolve_notification_context(
 def build_notification_message(
     notification_type: NotificationType,
     event_title: str,
+    *,
+    cancelled_by_admin: bool = False,
 ) -> str:
     """Build a trusted server-side Notification message."""
+
+    if (
+        notification_type is NotificationType.BOOKING_CANCELLED
+        and cancelled_by_admin
+    ):
+        return _ADMIN_BOOKING_CANCELLATION_MESSAGE.format(
+            event_title=event_title,
+        )
 
     return _NOTIFICATION_MESSAGE_TEMPLATES[notification_type].format(
         event_title=event_title,

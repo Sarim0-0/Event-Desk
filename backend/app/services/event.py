@@ -45,6 +45,7 @@ async def list_events(
         EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=event.organizer.name,
             title=event.title,
             description=event.description,
             venue=event.venue,
@@ -100,6 +101,7 @@ async def list_draft_events(
             EventResponse(
                 id=event.id,
                 organizer_id=event.organizer_id,
+                organizer_name=event.organizer.name,
                 title=event.title,
                 description=event.description,
                 venue=event.venue,
@@ -203,6 +205,7 @@ async def create_event(
         response = EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=current_user.name,
             title=event.title,
             description=event.description,
             venue=event.venue,
@@ -296,6 +299,7 @@ async def update_event(
         response = EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=event.organizer.name,
             title=event.title,
             description=event.description,
             venue=event.venue,
@@ -364,6 +368,7 @@ async def cancel_event(
         response = EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=event.organizer.name,
             title=event.title,
             description=event.description,
             venue=event.venue,

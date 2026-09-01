@@ -33,7 +33,7 @@ async def list_bookings_by_user(
     statement = (
         select(Booking)
         .options(
-            selectinload(Booking.event),
+            selectinload(Booking.event).selectinload(Event.organizer),
             selectinload(Booking.review).selectinload(Review.replies),
         )
         .where(Booking.user_id == user_id)
@@ -51,6 +51,7 @@ async def get_event_for_booking_for_update(
 ) -> Event | None:
     statement = (
         select(Event)
+        .options(selectinload(Event.organizer))
         .where(
             Event.id == event_id,
             Event.deleted_at.is_(None),
@@ -89,6 +90,7 @@ async def get_event_for_update(
 ) -> Event | None:
     statement = (
         select(Event)
+        .options(selectinload(Event.organizer))
         .where(Event.id == event_id)
         .with_for_update()
     )
