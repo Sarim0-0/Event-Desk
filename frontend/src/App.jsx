@@ -3208,7 +3208,7 @@ function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
                     >
                       Edit review
                     </button>
-                  ) : booking.status === 'confirmed' && booking.event_status !== 'cancelled' ? (
+                  ) : booking.status === 'confirmed' && booking.event_status === 'completed' ? (
                     <button
                       className="secondary-button review-booking-button"
                       type="button"

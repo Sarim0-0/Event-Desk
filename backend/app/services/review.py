@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models.enums import BookingStatus
+from app.models.enums import BookingStatus, EventStatus
 from app.models.user import User
 from app.repositories import review as review_repository
 from app.schemas.reply import ReplyResponse
@@ -94,6 +94,11 @@ async def create_review(
         if event is None or event.deleted_at is not None:
             raise NotFoundError(
                 "The event for this booking does not exist."
+            )
+
+        if event.status is not EventStatus.COMPLETED:
+            raise ConflictError(
+                "Reviews can only be left after the event has been completed."
             )
 
         existing_review = await review_repository.get_review_by_booking_id(
