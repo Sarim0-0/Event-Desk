@@ -6,22 +6,59 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from app.api.dependencies import (
     CurrentUser,
     DatabaseSession,
-    PermissionGrant,
-    require_any_permission,
+    require_own_or_any_permission,
 )
 from app.core.permissions import (
     DELETE_ANY_REVIEW,
     DELETE_OWN_REVIEW,
     EDIT_ANY_REVIEW,
     EDIT_OWN_REVIEW,
+    REPLY_TO_ANY_REVIEW,
+    REPLY_TO_OWN_EVENT_REVIEWS,
 )
 from app.models.enums import NotificationType
-from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
-from app.services.review import create_review, delete_review, update_review
+from app.schemas.review import (
+    EventReviewsResponse,
+    ReviewCreate,
+    ReviewResponse,
+    ReviewUpdate,
+)
+from app.services.review import (
+    create_review,
+    delete_review,
+    list_event_reviews,
+    update_review,
+)
 from app.tasks.notification import create_notification_in_background
 
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
+
+
+@router.get(
+    "",
+    response_model=list[EventReviewsResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_event_reviews",
+)
+async def list_event_reviews_endpoint(
+    current_user: CurrentUser,
+    can_view_any: Annotated[
+        bool,
+        Depends(
+            require_own_or_any_permission(
+                REPLY_TO_OWN_EVENT_REVIEWS,
+                REPLY_TO_ANY_REVIEW,
+            )
+        ),
+    ],
+    session: DatabaseSession,
+) -> list[EventReviewsResponse]:
+    return await list_event_reviews(
+        session,
+        current_user,
+        can_view_any=can_view_any,
+    )
 
 
 @router.post(
@@ -54,10 +91,11 @@ async def create_review_endpoint(
 async def update_review_endpoint(
     review_id: UUID,
     request: ReviewUpdate,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_update_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 EDIT_OWN_REVIEW,
                 EDIT_ANY_REVIEW,
             )
@@ -67,11 +105,10 @@ async def update_review_endpoint(
 ) -> ReviewResponse:
     return await update_review(
         session,
-        permission_grant.user,
+        current_user,
         review_id,
         request,
-        can_update_own=permission_grant.allows(EDIT_OWN_REVIEW),
-        can_update_any=permission_grant.allows(EDIT_ANY_REVIEW),
+        can_update_any=can_update_any,
     )
 
 
@@ -83,10 +120,11 @@ async def update_review_endpoint(
 )
 async def delete_review_endpoint(
     review_id: UUID,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_delete_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 DELETE_OWN_REVIEW,
                 DELETE_ANY_REVIEW,
             )
@@ -96,8 +134,7 @@ async def delete_review_endpoint(
 ) -> None:
     await delete_review(
         session,
-        permission_grant.user,
+        current_user,
         review_id,
-        can_delete_own=permission_grant.allows(DELETE_OWN_REVIEW),
-        can_delete_any=permission_grant.allows(DELETE_ANY_REVIEW),
+        can_delete_any=can_delete_any,
     )

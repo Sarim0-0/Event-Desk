@@ -18,6 +18,7 @@ async def create_notification_in_background(
     notification_type: NotificationType,
     related_booking_id: UUID | None = None,
     related_review_id: UUID | None = None,
+    cancelled_by_admin: bool = False,
 ) -> None:
     """Persist a Notification using a session owned by this background task."""
 
@@ -28,6 +29,7 @@ async def create_notification_in_background(
                 notification_type=notification_type,
                 related_booking_id=related_booking_id,
                 related_review_id=related_review_id,
+                cancelled_by_admin=cancelled_by_admin,
             )
 
         await notification_connection_manager.send_notification(
@@ -44,6 +46,7 @@ async def create_notification_in_background(
 async def create_event_cancellation_notifications_in_background(
     *,
     event_id: UUID,
+    cancelled_by_admin: bool = False,
 ) -> None:
     """Persist and deliver the distinct Event-cancellation Notifications."""
 
@@ -52,6 +55,7 @@ async def create_event_cancellation_notifications_in_background(
             notifications = await create_event_cancellation_notifications(
                 session,
                 event_id=event_id,
+                cancelled_by_admin=cancelled_by_admin,
             )
 
         for notification in notifications:

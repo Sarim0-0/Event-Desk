@@ -16,9 +16,6 @@ scheduler = AsyncIOScheduler(timezone=timezone.utc)
 def register_minutely_job(job: ScheduledJob, *, job_id: str) -> None:
     """Register one UTC minutely job, replacing an existing matching ID."""
 
-    while scheduler.get_job(job_id) is not None:
-        scheduler.remove_job(job_id)
-
     scheduler.add_job(
         job,
         trigger="interval",

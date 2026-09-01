@@ -17,7 +17,6 @@ async def create_reply(
     review_id: UUID,
     request: ReplyCreate,
     *,
-    can_reply_own_event: bool,
     can_reply_any: bool,
 ) -> ReplyResponse:
     replier_role: ReplyRole | None = None
@@ -32,16 +31,12 @@ async def create_reply(
 
         if can_reply_any:
             replier_role = ReplyRole.ADMIN
-        elif can_reply_own_event:
+        else:
             if review.booking.event.organizer_id != current_user.id:
                 raise ForbiddenError(
                     "You can only reply to Reviews for your own Events."
                 )
             replier_role = ReplyRole.ORGANIZER
-        else:
-            raise ForbiddenError(
-                "You do not have permission to reply to this Review."
-            )
 
         existing_role_reply = (
             await reply_repository.get_reply_by_review_and_role(
@@ -72,7 +67,7 @@ async def create_reply(
             replier_role=replier_role,
             body=request.body,
         )
-        await reply_repository.flush_reply(session, reply)
+        await session.flush([reply])
 
         response = ReplyResponse.model_validate(reply)
 

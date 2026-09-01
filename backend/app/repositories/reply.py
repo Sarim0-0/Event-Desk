@@ -65,10 +65,3 @@ def add_reply(
     )
     session.add(reply)
     return reply
-
-
-async def flush_reply(
-    session: AsyncSession,
-    reply: Reply,
-) -> None:
-    await session.flush([reply])

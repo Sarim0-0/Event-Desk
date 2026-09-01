@@ -12,12 +12,18 @@ from app.models.enums import (
     EventStatus,
 )
 from app.models.user import User
+from app.models.booking import Booking
+from app.models.event import Event
+from app.models.review import Review
 from app.repositories import booking as booking_repository
+from app.repositories import user as user_repository
 from app.schemas.booking import (
     BOOKINGS_PER_PAGE,
     BookingCreate,
     BookingListQuery,
     BookingResponse,
+    ManagedEventBookingResponse,
+    OrganizedEventBookingsResponse,
     PaginatedBookingsResponse,
 )
 from app.services import audit as audit_service
@@ -30,23 +36,108 @@ async def list_own_bookings(
 ) -> PaginatedBookingsResponse:
     """Return one read-only page of the authenticated User's Bookings."""
 
+    return await _list_bookings_for_user(
+        session,
+        user_id=current_user.id,
+        query=query,
+    )
+
+
+async def list_user_bookings(
+    session: AsyncSession,
+    user_id: UUID,
+    query: BookingListQuery,
+) -> PaginatedBookingsResponse:
+    """Return one booking page for an Admin-selected User."""
+
+    target_user = await user_repository.get_user_by_id(session, user_id)
+    if target_user is None:
+        raise NotFoundError("The selected User does not exist.")
+
+    return await _list_bookings_for_user(
+        session,
+        user_id=target_user.id,
+        query=query,
+    )
+
+
+async def _list_bookings_for_user(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    query: BookingListQuery,
+) -> PaginatedBookingsResponse:
+    """Build the shared paginated Booking response for one User ID."""
+
     total_items = await booking_repository.count_bookings_by_user(
         session,
-        current_user.id,
+        user_id,
     )
     bookings = await booking_repository.list_bookings_by_user(
         session,
-        user_id=current_user.id,
+        user_id=user_id,
         page=query.page,
     )
     total_pages = (total_items + BOOKINGS_PER_PAGE - 1) // BOOKINGS_PER_PAGE
 
     return PaginatedBookingsResponse(
-        items=[BookingResponse.model_validate(booking) for booking in bookings],
+        items=[
+            _booking_response(
+                booking,
+                booking.event,
+                review=booking.review,
+            )
+            for booking in bookings
+        ],
         page=query.page,
         total_items=total_items,
         total_pages=total_pages,
     )
+
+
+async def list_organized_event_bookings(
+    session: AsyncSession,
+    current_user: User,
+) -> list[OrganizedEventBookingsResponse]:
+    """Group attendee Bookings under Events owned by the current User."""
+
+    bookings = await booking_repository.list_bookings_for_organized_events(
+        session,
+        organizer_id=current_user.id,
+    )
+    groups: dict[UUID, OrganizedEventBookingsResponse] = {}
+
+    for booking in bookings:
+        event = booking.event
+        attendee = booking.user
+        group = groups.get(event.id)
+        if group is None:
+            group = OrganizedEventBookingsResponse(
+                event_id=event.id,
+                event_title=event.title,
+                event_status=event.status,
+                event_venue=event.venue,
+                event_datetime=event.event_datetime,
+                total_tickets=event.total_tickets,
+                tickets_available=event.tickets_available,
+                bookings=[],
+            )
+            groups[event.id] = group
+
+        group.bookings.append(
+            ManagedEventBookingResponse(
+                id=booking.id,
+                user_id=booking.user_id,
+                attendee_name=attendee.name,
+                attendee_email=attendee.email,
+                quantity=booking.quantity,
+                status=booking.status,
+                booked_at=booking.booked_at,
+                cancelled_at=booking.cancelled_at,
+            )
+        )
+
+    return list(groups.values())
 
 
 async def create_booking(
@@ -95,7 +186,7 @@ async def create_booking(
             status=BookingStatus.CONFIRMED,
             booked_at=datetime.now(timezone.utc),
         )
-        await booking_repository.flush_booking(session, booking)
+        await session.flush([booking])
         await booking_repository.refresh_booking(session, booking)
 
         audit_service.record_action(
@@ -106,7 +197,7 @@ async def create_booking(
             entity_id=booking.id,
         )
 
-        response = BookingResponse.model_validate(booking)
+        response = _booking_response(booking, event)
 
         await session.commit()
         return response
@@ -127,7 +218,6 @@ async def cancel_booking(
     current_user: User,
     booking_id: UUID,
     *,
-    can_cancel_own: bool,
     can_cancel_any: bool,
 ) -> BookingResponse:
     try:
@@ -158,12 +248,19 @@ async def cancel_booking(
         if booking.status is BookingStatus.CANCELLED:
             raise ConflictError("The booking has already been cancelled.")
 
-        if not can_cancel_any and (
-            not can_cancel_own
-            or booking.user_id != current_user.id
-        ):
+        if not can_cancel_any and booking.user_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to cancel this booking."
+            )
+
+        if event.status is EventStatus.CANCELLED:
+            raise ConflictError(
+                "A booking for a cancelled event cannot be cancelled."
+            )
+
+        if event.status is EventStatus.COMPLETED:
+            raise ConflictError(
+                "A booking for a completed event cannot be cancelled."
             )
 
         available_after_restoration = (
@@ -178,7 +275,7 @@ async def cancel_booking(
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = datetime.now(timezone.utc)
 
-        await booking_repository.flush_booking(session, booking)
+        await session.flush([booking])
         await booking_repository.refresh_booking(session, booking)
 
         audit_service.record_action(
@@ -189,7 +286,11 @@ async def cancel_booking(
             entity_id=booking.id,
         )
 
-        response = BookingResponse.model_validate(booking)
+        response = _booking_response(
+            booking,
+            event,
+            review=booking.review,
+        )
 
         await session.commit()
         return response
@@ -207,4 +308,29 @@ def _get_constraint_name(error: IntegrityError) -> str | None:
         getattr(original_error, "constraint_name", None)
         or getattr(cause, "constraint_name", None)
         or getattr(diagnostics, "constraint_name", None)
+    )
+
+
+def _booking_response(
+    booking: Booking,
+    event: Event,
+    *,
+    review: Review | None = None,
+) -> BookingResponse:
+    return BookingResponse(
+        id=booking.id,
+        user_id=booking.user_id,
+        event_id=booking.event_id,
+        event_title=event.title,
+        event_venue=event.venue,
+        event_datetime=event.event_datetime,
+        event_organizer_name=event.organizer.name,
+        event_status=event.status,
+        review=review,
+        quantity=booking.quantity,
+        status=booking.status,
+        booked_at=booking.booked_at,
+        cancelled_at=booking.cancelled_at,
+        created_at=booking.created_at,
+        updated_at=booking.updated_at,
     )

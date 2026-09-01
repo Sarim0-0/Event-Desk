@@ -10,6 +10,7 @@ CANCEL_OWN_EVENT = "events.cancel_own"
 
 CANCEL_ANY_BOOKING = "bookings.cancel_any"
 CANCEL_OWN_BOOKING = "bookings.cancel_own"
+VIEW_OWN_EVENT_BOOKINGS = "bookings.view_own_events"
 
 REPLY_TO_ANY_REVIEW = "reviews.reply_any"
 REPLY_TO_OWN_EVENT_REVIEWS = "reviews.reply_own_events"

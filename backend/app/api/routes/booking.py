@@ -6,23 +6,27 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from app.api.dependencies import (
     CurrentUser,
     DatabaseSession,
-    PermissionGrant,
-    require_any_permission,
+    require_own_or_any_permission,
+    require_permission,
 )
 from app.core.permissions import (
     CANCEL_ANY_BOOKING,
     CANCEL_OWN_BOOKING,
+    VIEW_OWN_EVENT_BOOKINGS,
 )
-from app.models.enums import NotificationType
+from app.models.enums import NotificationType, UserRole
+from app.models.user import User
 from app.schemas.booking import (
     BookingCreate,
     BookingListQuery,
     BookingResponse,
+    OrganizedEventBookingsResponse,
     PaginatedBookingsResponse,
 )
 from app.services.booking import (
     cancel_booking,
     create_booking,
+    list_organized_event_bookings,
     list_own_bookings,
 )
 from app.tasks.event_availability import (
@@ -46,6 +50,22 @@ async def list_own_bookings_endpoint(
     session: DatabaseSession,
 ) -> PaginatedBookingsResponse:
     return await list_own_bookings(session, current_user, query)
+
+
+@router.get(
+    "/organized-events",
+    response_model=list[OrganizedEventBookingsResponse],
+    status_code=status.HTTP_200_OK,
+    name="list_organized_event_bookings",
+)
+async def list_organized_event_bookings_endpoint(
+    current_user: Annotated[
+        User,
+        Depends(require_permission(VIEW_OWN_EVENT_BOOKINGS)),
+    ],
+    session: DatabaseSession,
+) -> list[OrganizedEventBookingsResponse]:
+    return await list_organized_event_bookings(session, current_user)
 
 
 @router.post(
@@ -82,10 +102,11 @@ async def create_booking_endpoint(
 async def cancel_booking_endpoint(
     booking_id: UUID,
     background_tasks: BackgroundTasks,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_cancel_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 CANCEL_OWN_BOOKING,
                 CANCEL_ANY_BOOKING,
             )
@@ -95,15 +116,18 @@ async def cancel_booking_endpoint(
 ) -> BookingResponse:
     booking = await cancel_booking(
         session,
-        permission_grant.user,
+        current_user,
         booking_id,
-        can_cancel_own=permission_grant.allows(CANCEL_OWN_BOOKING),
-        can_cancel_any=permission_grant.allows(CANCEL_ANY_BOOKING),
+        can_cancel_any=can_cancel_any,
     )
     background_tasks.add_task(
         create_notification_in_background,
         notification_type=NotificationType.BOOKING_CANCELLED,
         related_booking_id=booking.id,
+        cancelled_by_admin=(
+            current_user.role.name == UserRole.ADMIN.value
+            and booking.user_id != current_user.id
+        ),
     )
     background_tasks.add_task(
         broadcast_event_availability_in_background,

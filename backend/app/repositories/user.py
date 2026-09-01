@@ -112,10 +112,6 @@ async def revoke_active_refresh_tokens(
     await session.execute(statement)
 
 
-async def flush_user(session: AsyncSession, user: User) -> None:
-    await session.flush([user])
-
-
 async def refresh_user(session: AsyncSession, user: User) -> User:
     await session.refresh(
         user,

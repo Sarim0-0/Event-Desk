@@ -11,10 +11,28 @@ from pydantic import (
     model_validator,
 )
 
-from app.models.enums import EventStatus
+from app.models.enums import BookingStatus, EventStatus
 
 
 EVENTS_PER_PAGE = 6
+
+
+class CategoryResponse(BaseModel):
+    """Category option available when creating or filtering Events."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+
+
+class TagResponse(BaseModel):
+    """Tag option available when creating or filtering Events."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
 
 
 class EventCreateRequest(BaseModel):
@@ -167,6 +185,7 @@ class EventResponse(BaseModel):
 
     id: UUID
     organizer_id: UUID
+    organizer_name: str
     title: str
     description: str
     venue: str
@@ -177,6 +196,7 @@ class EventResponse(BaseModel):
     category_id: UUID | None
     tag_ids: list[UUID]
     status: EventStatus
+    current_user_booking_status: BookingStatus | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -43,6 +43,13 @@ _NOTIFICATION_MESSAGE_TEMPLATES = {
     ),
 }
 
+_ADMIN_BOOKING_CANCELLATION_MESSAGE = (
+    'An administrator cancelled your booking for "{event_title}".'
+)
+_ADMIN_EVENT_CANCELLATION_MESSAGE = (
+    'An administrator cancelled your event "{event_title}".'
+)
+
 
 async def list_notifications(
     session: AsyncSession,
@@ -102,10 +109,7 @@ async def mark_notification_read(
             notification,
             read_at=datetime.now(timezone.utc),
         )
-        await notification_repository.flush_notification(
-            session,
-            notification,
-        )
+        await session.flush([notification])
 
         response = NotificationResponse.model_validate(notification)
 
@@ -148,6 +152,7 @@ async def create_notification(
     notification_type: NotificationType,
     related_booking_id: UUID | None = None,
     related_review_id: UUID | None = None,
+    cancelled_by_admin: bool = False,
 ) -> NotificationResponse:
     """Persist one trusted, server-created Notification."""
 
@@ -166,14 +171,12 @@ async def create_notification(
             message=build_notification_message(
                 notification_type,
                 event_title,
+                cancelled_by_admin=cancelled_by_admin,
             ),
             related_booking_id=related_booking_id,
             related_review_id=related_review_id,
         )
-        await notification_repository.flush_notification(
-            session,
-            notification,
-        )
+        await session.flush([notification])
         await notification_repository.refresh_notification(
             session,
             notification,
@@ -192,8 +195,9 @@ async def create_event_cancellation_notifications(
     session: AsyncSession,
     *,
     event_id: UUID,
+    cancelled_by_admin: bool = False,
 ) -> list[NotificationResponse]:
-    """Persist one Event-cancelled Notification per distinct booked User."""
+    """Notify booked Users and, when applicable, the Event organizer."""
 
     try:
         booking_contexts = (
@@ -202,6 +206,18 @@ async def create_event_cancellation_notifications(
                 event_id,
             )
         )
+        organizer_context = None
+        if cancelled_by_admin:
+            organizer_context = (
+                await notification_repository.get_cancelled_event_organizer_context(
+                    session,
+                    event_id,
+                )
+            )
+            if organizer_context is None:
+                raise NotFoundError("The cancelled Event does not exist.")
+
+        organizer_id = organizer_context[0] if organizer_context else None
         notifications = [
             notification_repository.add_notification(
                 session,
@@ -215,13 +231,28 @@ async def create_event_cancellation_notifications(
                 related_review_id=None,
             )
             for booking_id, user_id, event_title in booking_contexts
+            if user_id != organizer_id
         ]
 
-        for notification in notifications:
-            await notification_repository.flush_notification(
-                session,
-                notification,
+        if organizer_context is not None:
+            organizer_id, event_title = organizer_context
+            notifications.append(
+                notification_repository.add_notification(
+                    session,
+                    user_id=organizer_id,
+                    notification_type=NotificationType.EVENT_CANCELLED,
+                    message=build_notification_message(
+                        NotificationType.EVENT_CANCELLED,
+                        event_title,
+                        cancelled_by_admin=True,
+                    ),
+                    related_booking_id=None,
+                    related_review_id=None,
+                )
             )
+
+        for notification in notifications:
+            await session.flush([notification])
             await notification_repository.refresh_notification(
                 session,
                 notification,
@@ -291,8 +322,26 @@ async def _resolve_notification_context(
 def build_notification_message(
     notification_type: NotificationType,
     event_title: str,
+    *,
+    cancelled_by_admin: bool = False,
 ) -> str:
     """Build a trusted server-side Notification message."""
+
+    if (
+        notification_type is NotificationType.BOOKING_CANCELLED
+        and cancelled_by_admin
+    ):
+        return _ADMIN_BOOKING_CANCELLATION_MESSAGE.format(
+            event_title=event_title,
+        )
+
+    if (
+        notification_type is NotificationType.EVENT_CANCELLED
+        and cancelled_by_admin
+    ):
+        return _ADMIN_EVENT_CANCELLATION_MESSAGE.format(
+            event_title=event_title,
+        )
 
     return _NOTIFICATION_MESSAGE_TEMPLATES[notification_type].format(
         event_title=event_title,

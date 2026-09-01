@@ -94,9 +94,3 @@ def mark_reminder_sent(
 ) -> Event:
     event.reminder_sent_at = sent_at
     return event
-
-
-async def flush_reminder_batch(session: AsyncSession) -> None:
-    """Flush the marker and all Notification inserts without committing."""
-
-    await session.flush()

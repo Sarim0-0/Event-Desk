@@ -8,21 +8,25 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.enums import AuditAction, AuditEntityType, EventStatus
 from app.models.event import Tag
 from app.models.user import User
+from app.repositories import booking as booking_repository
 from app.repositories import event as event_repository
 from app.schemas.event import (
     EVENTS_PER_PAGE,
+    CategoryResponse,
     EventAvailabilityResponse,
     EventCreateRequest,
     EventListQuery,
     EventResponse,
     EventUpdate,
     PaginatedEventsResponse,
+    TagResponse,
 )
 from app.services import audit as audit_service
 
 
 async def list_events(
     session: AsyncSession,
+    current_user: User,
     query: EventListQuery,
 ) -> PaginatedEventsResponse:
     """Return one read-only page of visible, filtered Events."""
@@ -38,11 +42,19 @@ async def list_events(
         category_id=query.category_id,
         tag_ids=query.tag_ids,
     )
+    booking_statuses = (
+        await booking_repository.get_user_booking_statuses_for_events(
+            session,
+            user_id=current_user.id,
+            event_ids=[event.id for event in events],
+        )
+    )
 
     items = [
         EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=event.organizer.name,
             title=event.title,
             description=event.description,
             venue=event.venue,
@@ -53,6 +65,7 @@ async def list_events(
             category_id=event.category_id,
             tag_ids=[tag.id for tag in event.tags],
             status=event.status,
+            current_user_booking_status=booking_statuses.get(event.id),
             created_at=event.created_at,
             updated_at=event.updated_at,
         )
@@ -66,6 +79,125 @@ async def list_events(
         total_items=total_items,
         total_pages=total_pages,
     )
+
+
+async def list_completed_events(
+    session: AsyncSession,
+    current_user: User,
+    query: EventListQuery,
+) -> PaginatedEventsResponse:
+    """Return one filtered page of completed Events for historical viewing."""
+
+    total_items = await event_repository.count_completed_events(
+        session,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    events = await event_repository.list_completed_events(
+        session,
+        page=query.page,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    booking_statuses = (
+        await booking_repository.get_user_booking_statuses_for_events(
+            session,
+            user_id=current_user.id,
+            event_ids=[event.id for event in events],
+        )
+    )
+    total_pages = (total_items + EVENTS_PER_PAGE - 1) // EVENTS_PER_PAGE
+
+    return PaginatedEventsResponse(
+        items=[
+            EventResponse(
+                id=event.id,
+                organizer_id=event.organizer_id,
+                organizer_name=event.organizer.name,
+                title=event.title,
+                description=event.description,
+                venue=event.venue,
+                event_datetime=event.event_datetime,
+                ticket_price=event.ticket_price,
+                total_tickets=event.total_tickets,
+                tickets_available=event.tickets_available,
+                category_id=event.category_id,
+                tag_ids=[tag.id for tag in event.tags],
+                status=event.status,
+                current_user_booking_status=booking_statuses.get(event.id),
+                created_at=event.created_at,
+                updated_at=event.updated_at,
+            )
+            for event in events
+        ],
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
+
+
+async def list_draft_events(
+    session: AsyncSession,
+    current_user: User,
+    query: EventListQuery,
+    *,
+    can_view_any: bool,
+) -> PaginatedEventsResponse:
+    """Return drafts visible through the caller's Event permissions."""
+
+    organizer_id = None if can_view_any else current_user.id
+    total_items = await event_repository.count_draft_events(
+        session,
+        organizer_id=organizer_id,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    events = await event_repository.list_draft_events(
+        session,
+        page=query.page,
+        organizer_id=organizer_id,
+        category_id=query.category_id,
+        tag_ids=query.tag_ids,
+    )
+    total_pages = (total_items + EVENTS_PER_PAGE - 1) // EVENTS_PER_PAGE
+
+    return PaginatedEventsResponse(
+        items=[
+            EventResponse(
+                id=event.id,
+                organizer_id=event.organizer_id,
+                organizer_name=event.organizer.name,
+                title=event.title,
+                description=event.description,
+                venue=event.venue,
+                event_datetime=event.event_datetime,
+                ticket_price=event.ticket_price,
+                total_tickets=event.total_tickets,
+                tickets_available=event.tickets_available,
+                category_id=event.category_id,
+                tag_ids=[tag.id for tag in event.tags],
+                status=event.status,
+                created_at=event.created_at,
+                updated_at=event.updated_at,
+            )
+            for event in events
+        ],
+        page=query.page,
+        total_items=total_items,
+        total_pages=total_pages,
+    )
+
+
+async def list_categories(
+    session: AsyncSession,
+) -> list[CategoryResponse]:
+    categories = await event_repository.list_categories(session)
+    return [CategoryResponse.model_validate(category) for category in categories]
+
+
+async def list_tags(session: AsyncSession) -> list[TagResponse]:
+    tags = await event_repository.list_tags(session)
+    return [TagResponse.model_validate(tag) for tag in tags]
 
 
 async def get_event_availability(
@@ -138,6 +270,7 @@ async def create_event(
         response = EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=current_user.name,
             title=event.title,
             description=event.description,
             venue=event.venue,
@@ -165,7 +298,6 @@ async def update_event(
     event_id: UUID,
     request: EventUpdate,
     *,
-    can_edit_own: bool,
     can_edit_any: bool,
 ) -> EventResponse:
     try:
@@ -181,10 +313,7 @@ async def update_event(
         }:
             raise ConflictError("This Event can no longer be edited.")
 
-        if not can_edit_any and (
-            not can_edit_own
-            or event.organizer_id != current_user.id
-        ):
+        if not can_edit_any and event.organizer_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to edit this Event."
             )
@@ -229,12 +358,13 @@ async def update_event(
         )
         if "event_datetime" in changes:
             event_repository.reset_event_reminder(event)
-        await event_repository.flush_event(session)
+        await session.flush()
         await event_repository.refresh_event(session, event)
 
         response = EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=event.organizer.name,
             title=event.title,
             description=event.description,
             venue=event.venue,
@@ -261,7 +391,6 @@ async def cancel_event(
     current_user: User,
     event_id: UUID,
     *,
-    can_cancel_own: bool,
     can_cancel_any: bool,
 ) -> EventResponse:
     try:
@@ -281,10 +410,7 @@ async def cancel_event(
         if event.status is EventStatus.COMPLETED:
             raise ConflictError("This Event can no longer be cancelled.")
 
-        if not can_cancel_any and (
-            not can_cancel_own
-            or event.organizer_id != current_user.id
-        ):
+        if not can_cancel_any and event.organizer_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to cancel this Event."
             )
@@ -293,7 +419,7 @@ async def cancel_event(
             event,
             cancelled_at=datetime.now(timezone.utc),
         )
-        await event_repository.flush_event(session)
+        await session.flush()
         await event_repository.refresh_event(session, event)
 
         audit_service.record_action(
@@ -307,6 +433,7 @@ async def cancel_event(
         response = EventResponse(
             id=event.id,
             organizer_id=event.organizer_id,
+            organizer_name=event.organizer.name,
             title=event.title,
             description=event.description,
             venue=event.venue,

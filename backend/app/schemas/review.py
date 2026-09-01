@@ -10,6 +10,9 @@ from pydantic import (
     model_validator,
 )
 
+from app.models.enums import EventStatus
+from app.schemas.reply import ReplyResponse
+
 
 class ReviewCreate(BaseModel):
     """Client-provided information used to leave a review."""
@@ -70,3 +73,27 @@ class ReviewResponse(BaseModel):
     comment: str
     created_at: datetime
     updated_at: datetime
+
+
+class ReviewWithRepliesResponse(ReviewResponse):
+    """Review information with its direct organizer and Admin Replies."""
+
+    replies: list[ReplyResponse]
+
+
+class ManagedReviewResponse(ReviewWithRepliesResponse):
+    """Review context shown to an Event organizer or Admin."""
+
+    reviewer_id: UUID
+    reviewer_name: str
+
+
+class EventReviewsResponse(BaseModel):
+    """All Reviews belonging to one Event."""
+
+    event_id: UUID
+    event_title: str
+    event_status: EventStatus
+    organizer_id: UUID
+    organizer_name: str
+    reviews: list[ManagedReviewResponse]

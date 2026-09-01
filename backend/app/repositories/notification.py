@@ -186,6 +186,26 @@ async def get_cancelled_event_booking_contexts(
     ]
 
 
+async def get_cancelled_event_organizer_context(
+    session: AsyncSession,
+    event_id: UUID,
+) -> tuple[UUID, str] | None:
+    """Return the owner and title of an Event after it has been cancelled."""
+
+    statement = select(
+        Event.organizer_id,
+        Event.title,
+    ).where(
+        Event.id == event_id,
+        Event.status == EventStatus.CANCELLED,
+        Event.deleted_at.is_not(None),
+    )
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        return None
+    return row.organizer_id, row.title
+
+
 def add_notification(
     session: AsyncSession,
     *,
@@ -204,13 +224,6 @@ def add_notification(
     )
     session.add(notification)
     return notification
-
-
-async def flush_notification(
-    session: AsyncSession,
-    notification: Notification,
-) -> None:
-    await session.flush([notification])
 
 
 async def refresh_notification(

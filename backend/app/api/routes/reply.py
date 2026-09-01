@@ -4,9 +4,9 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, status
 
 from app.api.dependencies import (
+    CurrentUser,
     DatabaseSession,
-    PermissionGrant,
-    require_any_permission,
+    require_own_or_any_permission,
 )
 from app.core.permissions import (
     REPLY_TO_ANY_REVIEW,
@@ -31,10 +31,11 @@ async def create_reply_endpoint(
     review_id: UUID,
     request: ReplyCreate,
     background_tasks: BackgroundTasks,
-    permission_grant: Annotated[
-        PermissionGrant,
+    current_user: CurrentUser,
+    can_reply_any: Annotated[
+        bool,
         Depends(
-            require_any_permission(
+            require_own_or_any_permission(
                 REPLY_TO_OWN_EVENT_REVIEWS,
                 REPLY_TO_ANY_REVIEW,
             )
@@ -44,13 +45,10 @@ async def create_reply_endpoint(
 ) -> ReplyResponse:
     reply = await create_reply(
         session,
-        permission_grant.user,
+        current_user,
         review_id,
         request,
-        can_reply_own_event=permission_grant.allows(
-            REPLY_TO_OWN_EVENT_REVIEWS
-        ),
-        can_reply_any=permission_grant.allows(REPLY_TO_ANY_REVIEW),
+        can_reply_any=can_reply_any,
     )
     background_tasks.add_task(
         create_notification_in_background,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   logIn,
@@ -6,7 +6,46 @@ import {
   refreshAccessToken,
   signUp,
 } from './api/auth.js'
-import { listEvents } from './api/events.js'
+import {
+  cancelEvent,
+  createEvent,
+  getEventAvailabilitySocketUrl,
+  listCategories,
+  listCompletedEvents,
+  listDraftEvents,
+  listEvents,
+  listTags,
+  updateEvent,
+} from './api/events.js'
+import {
+  cancelBooking,
+  createBooking,
+  listBookings,
+  listOrganizedEventBookings,
+  listUserBookings,
+} from './api/bookings.js'
+import {
+  createReview,
+  createReviewReply,
+  deleteReview,
+  listEventReviews,
+  updateReview,
+} from './api/reviews.js'
+import {
+  getNotificationSocketUrl,
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from './api/notifications.js'
+import {
+  changeOwnPassword,
+  changeUserRole,
+  deactivateUser,
+  listUsers,
+  updateOwnProfile,
+} from './api/users.js'
+import { listAuditLogs } from './api/auditLogs.js'
+import { SessionExpiredError } from './api/authenticated.js'
 import {
   clearTokens,
   getAccessTokenClaims,
@@ -223,24 +262,30 @@ function PasswordField({
   error,
   showStrength = false,
   autoComplete,
+  id = 'password',
+  name = 'password',
+  label = 'Password',
+  placeholder,
 }) {
   const [passwordVisible, setPasswordVisible] = useState(false)
   const checks = useMemo(() => getPasswordChecks(value), [value])
   const strength = getPasswordStrength(value, checks)
+  const errorId = `${id}-error`
+  const strengthId = `${id}-strength`
   const describedBy = [
-    error ? 'password-error' : null,
-    showStrength ? 'password-strength' : null,
+    error ? errorId : null,
+    showStrength ? strengthId : null,
   ]
     .filter(Boolean)
     .join(' ')
 
   return (
     <div className="form-field">
-      <label htmlFor="password">Password</label>
+      <label htmlFor={id}>{label}</label>
       <div className={`password-input ${error ? 'input-error' : ''}`}>
         <input
-          id="password"
-          name="password"
+          id={id}
+          name={name}
           type={passwordVisible ? 'text' : 'password'}
           value={value}
           onChange={onChange}
@@ -248,9 +293,9 @@ function PasswordField({
           maxLength={128}
           aria-invalid={Boolean(error)}
           aria-describedby={describedBy || undefined}
-          placeholder={
+          placeholder={placeholder || (
             showStrength ? 'Create a strong password' : 'Enter your password'
-          }
+          )}
         />
         <button
           className="visibility-toggle"
@@ -262,10 +307,10 @@ function PasswordField({
           <EyeIcon hidden={passwordVisible} />
         </button>
       </div>
-      <FieldError id="password-error">{error}</FieldError>
+      <FieldError id={errorId}>{error}</FieldError>
 
       {showStrength && (
-        <div className="password-strength" id="password-strength">
+        <div className="password-strength" id={strengthId}>
           <div className="strength-heading">
             <span>Password strength</span>
             <strong className={`strength-${strength.tone}`}>
@@ -530,7 +575,7 @@ function LoginForm({
     try {
       const tokens = await logIn(payload)
       saveTokens(tokens)
-      onAuthenticated(tokens)
+      onAuthenticated(tokens, { email: payload.email })
     } catch (error) {
       const apiErrors = getApiErrors(
         error,
@@ -645,6 +690,16 @@ function validateEventPage(payload) {
   return (
     payload &&
     Array.isArray(payload.items) &&
+    payload.items.every(
+      (event) =>
+        typeof event?.organizer_id === 'string' &&
+        typeof event.organizer_name === 'string' &&
+        event.organizer_name.trim().length > 0 &&
+        (event.current_user_booking_status === null ||
+          ['confirmed', 'cancelled'].includes(
+            event.current_user_booking_status,
+          )),
+    ) &&
     Number.isInteger(payload.page) &&
     payload.page >= 1 &&
     payload.page_size === 6 &&
@@ -686,6 +741,15 @@ function EventMetaIcon({ type }) {
     )
   }
 
+  if (type === 'organizer') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5 20a7 7 0 0114 0" />
+      </svg>
+    )
+  }
+
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="3" y="5" width="18" height="16" rx="2" />
@@ -694,23 +758,34 @@ function EventMetaIcon({ type }) {
   )
 }
 
-function EventCard({ event, index }) {
+function EventCard({ event, onSelect, index, categoryName, isOwned }) {
   const date = formatEventDate(event.event_datetime)
   const ticketsAvailable = Number(event.tickets_available)
+  const totalTickets = Number(event.total_tickets)
   const ticketLabel =
     ticketsAvailable === 0
       ? 'Sold out'
-      : `${ticketsAvailable} ticket${ticketsAvailable === 1 ? '' : 's'} available`
+      : `${ticketsAvailable} of ${totalTickets} tickets remaining`
 
   return (
     <button
-      className="event-card"
+      className={`event-card ${isOwned ? 'event-card-owned' : ''}`}
       type="button"
       aria-label={`View ${event.title}`}
-      title="Event details coming soon"
+      title={`View details for ${event.title}`}
+      onClick={() => onSelect(event)}
     >
       <div className={`event-card-cover event-theme-${index % EVENT_CARD_THEME_COUNT}`}>
         <span className="event-status">{event.status}</span>
+        {isOwned && <span className="event-owner-label">Your event</span>}
+        {categoryName && <span className="event-category">{categoryName}</span>}
+        {event.current_user_booking_status && (
+          <span className={`event-booking-label event-booking-label-${event.current_user_booking_status}`}>
+            {event.current_user_booking_status === 'confirmed'
+              ? 'Booked'
+              : 'Booking cancelled'}
+          </span>
+        )}
         <div className="event-date-tile">
           <strong>{date.day}</strong>
           <span>{date.month}</span>
@@ -727,6 +802,10 @@ function EventCard({ event, index }) {
         <p className="event-description">{event.description}</p>
 
         <div className="event-meta">
+          <span>
+            <EventMetaIcon type="organizer" />
+            Organized by {event.organizer_name}
+          </span>
           <span>
             <EventMetaIcon type="calendar" />
             {date.full} at {formatEventTime(event.event_datetime)}
@@ -766,16 +845,1385 @@ function EventCardSkeleton() {
   )
 }
 
-function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
+function AppIcon({ type }) {
+  const paths = {
+    events: (
+      <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>
+    ),
+    bookings: (
+      <><path d="M3 8a2 2 0 002-2h14a2 2 0 002 2v2a2 2 0 010 4v2a2 2 0 01-2 2H5a2 2 0 00-2-2v-2a2 2 0 010-4V8z" /><path d="M13 7v2M13 11v2M13 15v2" /></>
+    ),
+    'event-bookings': (
+      <><path d="M3 8a2 2 0 002-2h18v12H5a2 2 0 00-2-2v-2a2 2 0 010-4V8z" /><circle cx="14" cy="10" r="2" /><path d="M10 16a4 4 0 018 0" /></>
+    ),
+    users: (
+      <><circle cx="9" cy="8" r="3" /><path d="M3.5 20v-2a5.5 5.5 0 0111 0v2M16 5.5a3 3 0 010 5.5M17 14a5 5 0 013.5 4.8V20" /></>
+    ),
+    logs: (
+      <><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7" /></>
+    ),
+    bell: (
+      <><path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>
+    ),
+    notifications: (
+      <><path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>
+    ),
+    plus: <path d="M12 5v14M5 12h14" />,
+    check: <polyline points="20 6 9 17 4 12" />,
+    cancel: (
+      <><circle cx="12" cy="12" r="9" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></>
+    ),
+    clock: (
+      <><circle cx="12" cy="12" r="9" /><polyline points="12 6 12 12 16 14" /></>
+    ),
+    star: (
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    ),
+    reviews: (
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    ),
+    reply: (
+      <><polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 00-4-4H4" /></>
+    ),
+  }
+
+  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[type] || paths.bell}</svg>
+}
+
+function NotificationIcon({ type }) {
+  const iconMap = {
+    booking_confirmed: 'check',
+    booking_cancelled: 'cancel',
+    event_cancelled: 'cancel',
+    event_reminder: 'clock',
+    event_reviewed: 'star',
+    review_replied: 'reply',
+  }
+  return <AppIcon type={iconMap[type] || 'bell'} />
+}
+
+function ApplicationShell({
+  role,
+  profile,
+  currentPage,
+  onNavigate,
+  onCreateEvent,
+  onOpenProfile,
+  onLogout,
+  loggingOut,
+  unreadNotificationsCount = 0,
+  children,
+}) {
+  const profileInitial = (profile?.name || role).charAt(0).toUpperCase()
+  const navigation = [
+    { key: 'events', label: 'Events' },
+    { key: 'bookings', label: 'Bookings' },
+    ...(['organizer', 'admin'].includes(role)
+      ? [
+          { key: 'event-bookings', label: 'Event bookings' },
+          { key: 'reviews', label: 'Reviews' },
+        ]
+      : []),
+    ...(role === 'admin'
+      ? [
+          { key: 'users', label: 'Users' },
+          { key: 'logs', label: 'Logs' },
+        ]
+      : []),
+  ]
+
+  return (
+    <main className="app-page">
+      <header className="app-header">
+        <BrandMark />
+        <nav className="app-nav" aria-label="Primary navigation">
+          {navigation.map((item) => (
+            <a
+              className={currentPage === item.key ? 'app-nav-active' : ''}
+              href={`/${item.key}`}
+              onClick={(event) => onNavigate(item.key, event)}
+              aria-current={currentPage === item.key ? 'page' : undefined}
+              key={item.key}
+            >
+              <AppIcon type={item.key} />
+              {item.label}
+            </a>
+          ))}
+        </nav>
+        <div className="app-header-actions">
+          {['organizer', 'admin'].includes(role) && (
+            <button
+              className="create-event-button"
+              type="button"
+              onClick={onCreateEvent}
+            >
+              <AppIcon type="plus" />
+              Create event
+            </button>
+          )}
+          <button
+            className={`header-icon-button ${currentPage === 'notifications' ? 'header-icon-button-active' : ''}`}
+            type="button"
+            onClick={(event) => onNavigate('notifications', event)}
+            aria-label={
+              unreadNotificationsCount > 0
+                ? `Notifications (${unreadNotificationsCount} unread)`
+                : 'Notifications'
+            }
+            title="Notifications"
+            aria-current={currentPage === 'notifications' ? 'page' : undefined}
+          >
+            <AppIcon type="bell" />
+            {unreadNotificationsCount > 0 && (
+              <span className="notification-badge" aria-hidden="true">
+                {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+              </span>
+            )}
+          </button>
+          <button
+            className="logout-button"
+            type="button"
+            onClick={onLogout}
+            disabled={loggingOut}
+          >
+            {loggingOut ? 'Logging out...' : 'Log out'}
+          </button>
+          <button
+            className="profile-button"
+            type="button"
+            onClick={onOpenProfile}
+            aria-label="Open profile settings"
+            title="Profile settings"
+          >
+            {profileInitial}
+          </button>
+        </div>
+      </header>
+      {children}
+    </main>
+  )
+}
+
+function Pagination({ pageData, loading, onChange, label }) {
+  const first = pageData.total_items
+    ? (pageData.page - 1) * pageData.page_size + 1
+    : 0
+  const last = pageData.total_items
+    ? Math.min(pageData.page * pageData.page_size, pageData.total_items)
+    : 0
+
+  return (
+    <nav className="pagination" aria-label={`${label} pages`}>
+      <p>Showing {first}-{last} of {pageData.total_items}</p>
+      <div className="pagination-controls">
+        <button
+          type="button"
+          onClick={() => onChange(pageData.page - 1)}
+          disabled={loading || pageData.page <= 1}
+          aria-label="Previous page"
+        >
+          ←
+        </button>
+        <span>Page <strong>{pageData.page}</strong> of {pageData.total_pages}</span>
+        <button
+          type="button"
+          onClick={() => onChange(pageData.page + 1)}
+          disabled={loading || pageData.page >= pageData.total_pages}
+          aria-label="Next page"
+        >
+          →
+        </button>
+      </div>
+    </nav>
+  )
+}
+
+function ResourceError({ title, message, onRetry }) {
+  return (
+    <div className="events-state events-error" role="alert">
+      <span className="state-icon" aria-hidden="true">!</span>
+      <h2>{title}</h2>
+      <p>{message}</p>
+      <button type="button" onClick={onRetry}>Try again</button>
+    </div>
+  )
+}
+
+function getResourceErrorMessage(error, resource) {
+  if (error instanceof ApiError && typeof error.payload?.detail === 'string') {
+    return error.payload.detail
+  }
+  return `We could not load ${resource}. Check your connection and try again.`
+}
+
+function isMetadataList(value) {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item?.id === 'string' &&
+        typeof item?.name === 'string' &&
+        item.name.length > 0,
+    )
+  )
+}
+
+function useEventMetadata({
+  enabled,
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [categories, setCategories] = useState([])
+  const [tags, setTags] = useState([])
+  const [loading, setLoading] = useState(enabled)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    if (!enabled) return undefined
+
+    let cancelled = false
+    async function loadMetadata() {
+      setLoading(true)
+      setError(null)
+      try {
+        const categoryResult = await listCategories({
+          tokens: tokensRef.current,
+        })
+        const tagResult = await listTags({ tokens: categoryResult.tokens })
+        if (
+          !isMetadataList(categoryResult.data) ||
+          !isMetadataList(tagResult.data)
+        ) {
+          throw new Error('Invalid event metadata response.')
+        }
+        if (!cancelled) {
+          setCategories(categoryResult.data)
+          setTags(tagResult.data)
+          setLoading(false)
+          if (tagResult.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = tagResult.tokens
+            onTokensChanged(tagResult.tokens)
+          }
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, 'categories and tags'))
+        setLoading(false)
+      }
+    }
+
+    loadMetadata()
+    return () => { cancelled = true }
+  }, [enabled, onSessionExpired, onTokensChanged, retryCount])
+
+  return {
+    categories,
+    tags,
+    loading,
+    error,
+    retry: () => setRetryCount((count) => count + 1),
+  }
+}
+
+function getFormApiErrors(error, fields, fallbackMessage) {
+  if (!(error instanceof ApiError)) {
+    return {
+      fieldErrors: {},
+      message: 'Unable to reach EventDesk. Check that the API is running and try again.',
+    }
+  }
+
+  const detail = error.payload?.detail
+  if (!Array.isArray(detail)) {
+    return {
+      fieldErrors: {},
+      message: typeof detail === 'string' ? detail : fallbackMessage,
+    }
+  }
+
+  const fieldErrors = {}
+  const generalErrors = []
+  detail.forEach((issue) => {
+    const field = issue.loc?.at(-1)
+    const message = String(issue.msg || 'This value is invalid.').replace(
+      /^Value error,\s*/i,
+      '',
+    )
+    if (fields.includes(field)) fieldErrors[field] ??= message
+    else generalErrors.push(message)
+  })
+
+  return {
+    fieldErrors,
+    message: generalErrors.join(' ') || null,
+  }
+}
+
+function Modal({ titleId, onClose, className = '', children }) {
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') onClose()
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <section
+        className={`modal-panel ${className}`.trim()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <button
+          className="modal-close"
+          type="button"
+          onClick={onClose}
+          aria-label="Close dialog"
+        >
+          ×
+        </button>
+        {children}
+      </section>
+    </div>
+  )
+}
+
+function ConfirmationModal({
+  title,
+  description,
+  confirmLabel,
+  cancelLabel = 'Cancel',
+  onClose,
+  onConfirm,
+  submitting = false,
+}) {
+  const titleId = 'confirmation-modal-title'
+  const closeWhenIdle = () => {
+    if (!submitting) onClose()
+  }
+
+  return (
+    <Modal titleId={titleId} onClose={closeWhenIdle} className="confirmation-modal">
+      <div className="confirmation-modal-icon" aria-hidden="true">!</div>
+      <div className="modal-heading confirmation-modal-heading">
+        <p className="eyebrow">Please confirm</p>
+        <h1 id={titleId}>{title}</h1>
+        <p>{description}</p>
+      </div>
+      <div className="modal-actions confirmation-modal-actions">
+        <button className="secondary-button" type="button" onClick={closeWhenIdle} disabled={submitting}>
+          {cancelLabel}
+        </button>
+        <button className="destructive-button" type="button" onClick={onConfirm} disabled={submitting}>
+          {submitting && <span className="spinner" aria-hidden="true" />}
+          {submitting ? 'Cancelling…' : confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+const EMPTY_EVENT_FORM = {
+  title: '',
+  description: '',
+  venue: '',
+  event_datetime: '',
+  ticket_price: '',
+  total_tickets: '',
+  category_id: '',
+  tag_ids: [],
+}
+
+function CreateEventModal({
+  tokens,
+  onClose,
+  onCreated,
+  onSessionExpired,
+  onTokensChanged,
+  metadata,
+}) {
+  const [form, setForm] = useState(EMPTY_EVENT_FORM)
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  function updateField(event) {
+    const { name, value } = event.target
+    setForm((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  function toggleTag(tagId) {
+    setForm((current) => ({
+      ...current,
+      tag_ids: current.tag_ids.includes(tagId)
+        ? current.tag_ids.filter((id) => id !== tagId)
+        : [...current.tag_ids, tagId],
+    }))
+    setFieldErrors((current) => ({ ...current, tag_ids: undefined }))
+    setFormError(null)
+  }
+
+  function validate() {
+    const errors = {}
+    const eventDate = new Date(form.event_datetime)
+    const ticketPrice = Number(form.ticket_price)
+    const totalTickets = Number(form.total_tickets)
+
+    if (!form.title.trim()) errors.title = 'Event name is required.'
+    else if (characterLength(form.title.trim()) > 255) {
+      errors.title = 'Event name must contain at most 255 characters.'
+    }
+    if (!form.description.trim()) errors.description = 'Description is required.'
+    if (!form.venue.trim()) errors.venue = 'Venue is required.'
+    else if (characterLength(form.venue.trim()) > 255) {
+      errors.venue = 'Venue must contain at most 255 characters.'
+    }
+    if (!form.event_datetime || Number.isNaN(eventDate.getTime())) {
+      errors.event_datetime = 'Choose a valid event date and time.'
+    } else if (eventDate <= new Date()) {
+      errors.event_datetime = 'Event date and time must be in the future.'
+    }
+    if (form.ticket_price === '' || !Number.isFinite(ticketPrice) || ticketPrice < 0) {
+      errors.ticket_price = 'Enter a ticket price of 0 or more.'
+    } else if (!/^\d+(?:\.\d{1,2})?$/.test(form.ticket_price)) {
+      errors.ticket_price = 'Ticket price can have at most two decimal places.'
+    }
+    if (!Number.isInteger(totalTickets) || totalTickets < 1) {
+      errors.total_tickets = 'Enter at least one ticket.'
+    }
+    return errors
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const errors = validate()
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await createEvent({
+        tokens,
+        event: {
+          title: form.title.trim(),
+          description: form.description.trim(),
+          venue: form.venue.trim(),
+          event_datetime: new Date(form.event_datetime).toISOString(),
+          ticket_price: Number(form.ticket_price),
+          total_tickets: Number(form.total_tickets),
+          category_id: form.category_id || null,
+          tag_ids: form.tag_ids,
+          status: 'published',
+        },
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onCreated(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        Object.keys(EMPTY_EVENT_FORM),
+        'We could not create the event. Please try again.',
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal titleId="create-event-title" onClose={onClose} className="form-modal">
+      <div className="modal-heading">
+        <p className="eyebrow">New experience</p>
+        <h1 id="create-event-title">Create an event</h1>
+        <p>Your event will be published and shown in the events grid immediately.</p>
+      </div>
+      <Alert>{formError}</Alert>
+      {metadata.error && (
+        <div className="metadata-inline-error" role="alert">
+          <span>{metadata.error}</span>
+          <button type="button" onClick={metadata.retry}>Try again</button>
+        </div>
+      )}
+      <form className="event-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field event-form-wide">
+          <label htmlFor="event-title">Event name</label>
+          <input id="event-title" name="title" value={form.title} onChange={updateField} maxLength={255} className={fieldErrors.title ? 'input-error' : ''} placeholder="e.g. Product Design Meetup" />
+          <FieldError id="event-title-error">{fieldErrors.title}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="event-description">Description</label>
+          <textarea id="event-description" name="description" value={form.description} onChange={updateField} className={fieldErrors.description ? 'input-error' : ''} rows="4" placeholder="What should attendees know?" />
+          <FieldError id="event-description-error">{fieldErrors.description}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="event-venue">Venue</label>
+          <input id="event-venue" name="venue" value={form.venue} onChange={updateField} maxLength={255} className={fieldErrors.venue ? 'input-error' : ''} placeholder="Venue name and location" />
+          <FieldError id="event-venue-error">{fieldErrors.venue}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-category">Category <span className="optional-label">Optional</span></label>
+          <select id="event-category" name="category_id" value={form.category_id} onChange={updateField} disabled={metadata.loading}>
+            <option value="">No category</option>
+            {metadata.categories.map((category) => (
+              <option value={category.id} key={category.id}>{category.name}</option>
+            ))}
+          </select>
+          <FieldError id="event-category-error">{fieldErrors.category_id}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-datetime">Date and time</label>
+          <input id="event-datetime" name="event_datetime" type="datetime-local" value={form.event_datetime} onChange={updateField} className={fieldErrors.event_datetime ? 'input-error' : ''} />
+          <FieldError id="event-datetime-error">{fieldErrors.event_datetime}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-tickets">Total tickets</label>
+          <input id="event-tickets" name="total_tickets" type="number" min="1" step="1" value={form.total_tickets} onChange={updateField} className={fieldErrors.total_tickets ? 'input-error' : ''} placeholder="100" />
+          <FieldError id="event-tickets-error">{fieldErrors.total_tickets}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="event-price">Price per ticket</label>
+          <input id="event-price" name="ticket_price" type="number" min="0" step="0.01" value={form.ticket_price} onChange={updateField} className={fieldErrors.ticket_price ? 'input-error' : ''} placeholder="0.00" />
+          <FieldError id="event-price-error">{fieldErrors.ticket_price}</FieldError>
+        </div>
+        <fieldset className="event-tag-fieldset event-form-wide">
+          <legend>Tags <span className="optional-label">Optional</span></legend>
+          {metadata.loading ? (
+            <p className="metadata-help">Loading tags…</p>
+          ) : metadata.tags.length === 0 ? (
+            <p className="metadata-help">No tags are available.</p>
+          ) : (
+            <div className="tag-options">
+              {metadata.tags.map((tag) => (
+                <button
+                  className={form.tag_ids.includes(tag.id) ? 'tag-option-selected' : ''}
+                  type="button"
+                  onClick={() => toggleTag(tag.id)}
+                  aria-pressed={form.tag_ids.includes(tag.id)}
+                  key={tag.id}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <FieldError id="event-tags-error">{fieldErrors.tag_ids}</FieldError>
+        </fieldset>
+        <div className="event-publish-note event-form-wide">
+          <strong>Published immediately</strong>
+          <span>The event will be visible in the event grid and its selected filters.</span>
+        </div>
+        <div className="modal-actions event-form-wide">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Creating event…' : 'Create event'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function toDateTimeLocalInput(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return localDate.toISOString().slice(0, 16)
+}
+
+function EditEventModal({
+  event,
+  tokens,
+  onClose,
+  onUpdated,
+  onCancelled,
+  onSessionExpired,
+  onTokensChanged,
+  metadata,
+}) {
+  const [form, setForm] = useState(() => ({
+    title: event.title,
+    description: event.description,
+    venue: event.venue,
+    event_datetime: toDateTimeLocalInput(event.event_datetime),
+    ticket_price: String(event.ticket_price),
+    total_tickets: String(event.total_tickets),
+    category_id: event.category_id || '',
+    tag_ids: [...event.tag_ids],
+    status: event.status,
+  }))
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [action, setAction] = useState(null)
+
+  function updateField(changeEvent) {
+    const { name, value } = changeEvent.target
+    setForm((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  function toggleTag(tagId) {
+    setForm((current) => ({
+      ...current,
+      tag_ids: current.tag_ids.includes(tagId)
+        ? current.tag_ids.filter((id) => id !== tagId)
+        : [...current.tag_ids, tagId],
+    }))
+    setFieldErrors((current) => ({ ...current, tag_ids: undefined }))
+    setFormError(null)
+  }
+
+  function validate() {
+    const errors = {}
+    const eventDate = new Date(form.event_datetime)
+    const ticketPrice = Number(form.ticket_price)
+    const totalTickets = Number(form.total_tickets)
+
+    if (!form.title.trim()) errors.title = 'Event name is required.'
+    else if (characterLength(form.title.trim()) > 255) {
+      errors.title = 'Event name must contain at most 255 characters.'
+    }
+    if (!form.description.trim()) errors.description = 'Description is required.'
+    if (!form.venue.trim()) errors.venue = 'Venue is required.'
+    else if (characterLength(form.venue.trim()) > 255) {
+      errors.venue = 'Venue must contain at most 255 characters.'
+    }
+    if (!form.event_datetime || Number.isNaN(eventDate.getTime())) {
+      errors.event_datetime = 'Choose a valid event date and time.'
+    } else if (eventDate <= new Date()) {
+      errors.event_datetime = 'Event date and time must be in the future.'
+    }
+    if (form.ticket_price === '' || !Number.isFinite(ticketPrice) || ticketPrice < 0) {
+      errors.ticket_price = 'Enter a ticket price of 0 or more.'
+    } else if (!/^\d+(?:\.\d{1,2})?$/.test(form.ticket_price)) {
+      errors.ticket_price = 'Ticket price can have at most two decimal places.'
+    }
+    if (!Number.isInteger(totalTickets) || totalTickets < 1) {
+      errors.total_tickets = 'Enter at least one ticket.'
+    }
+    if (!['draft', 'published'].includes(form.status)) {
+      errors.status = 'Choose either draft or published.'
+    }
+    return errors
+  }
+
+  async function handleSubmit(submitEvent) {
+    submitEvent.preventDefault()
+    const errors = validate()
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setAction('saving')
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await updateEvent({
+        tokens,
+        eventId: event.id,
+        event: {
+          title: form.title.trim(),
+          description: form.description.trim(),
+          venue: form.venue.trim(),
+          event_datetime: new Date(form.event_datetime).toISOString(),
+          ticket_price: Number(form.ticket_price),
+          total_tickets: Number(form.total_tickets),
+          category_id: form.category_id || null,
+          tag_ids: form.tag_ids,
+          status: form.status,
+        },
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onUpdated(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        [...Object.keys(EMPTY_EVENT_FORM), 'status'],
+        'We could not update the event. Please try again.',
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setAction(null)
+    }
+  }
+
+  async function handleCancelEvent() {
+    if (action) return
+
+    setAction('cancelling')
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await cancelEvent({ tokens, eventId: event.id })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onCancelled(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      setFormError(
+        getResourceErrorMessage(error, 'the event cancellation'),
+      )
+    } finally {
+      setAction(null)
+    }
+  }
+
+  return (
+    <Modal titleId="edit-event-title" onClose={onClose} className="form-modal">
+      <div className="modal-heading">
+        <p className="eyebrow">Your event</p>
+        <h1 id="edit-event-title">Edit event</h1>
+        <p>Update the details below, or cancel this event for all attendees.</p>
+      </div>
+      <Alert>{formError}</Alert>
+      {metadata.error && (
+        <div className="metadata-inline-error" role="alert">
+          <span>{metadata.error}</span>
+          <button type="button" onClick={metadata.retry}>Try again</button>
+        </div>
+      )}
+      <form className="event-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field event-form-wide">
+          <label htmlFor="edit-event-title-input">Event name</label>
+          <input id="edit-event-title-input" name="title" value={form.title} onChange={updateField} maxLength={255} className={fieldErrors.title ? 'input-error' : ''} />
+          <FieldError id="edit-event-title-error">{fieldErrors.title}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="edit-event-description">Description</label>
+          <textarea id="edit-event-description" name="description" value={form.description} onChange={updateField} className={fieldErrors.description ? 'input-error' : ''} rows="4" />
+          <FieldError id="edit-event-description-error">{fieldErrors.description}</FieldError>
+        </div>
+        <div className="form-field event-form-wide">
+          <label htmlFor="edit-event-venue">Venue</label>
+          <input id="edit-event-venue" name="venue" value={form.venue} onChange={updateField} maxLength={255} className={fieldErrors.venue ? 'input-error' : ''} />
+          <FieldError id="edit-event-venue-error">{fieldErrors.venue}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-category">Category <span className="optional-label">Optional</span></label>
+          <select id="edit-event-category" name="category_id" value={form.category_id} onChange={updateField} disabled={metadata.loading}>
+            <option value="">No category</option>
+            {metadata.categories.map((category) => (
+              <option value={category.id} key={category.id}>{category.name}</option>
+            ))}
+          </select>
+          <FieldError id="edit-event-category-error">{fieldErrors.category_id}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-datetime">Date and time</label>
+          <input id="edit-event-datetime" name="event_datetime" type="datetime-local" value={form.event_datetime} onChange={updateField} className={fieldErrors.event_datetime ? 'input-error' : ''} />
+          <FieldError id="edit-event-datetime-error">{fieldErrors.event_datetime}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-tickets">Total tickets</label>
+          <input id="edit-event-tickets" name="total_tickets" type="number" min="1" step="1" value={form.total_tickets} onChange={updateField} className={fieldErrors.total_tickets ? 'input-error' : ''} />
+          <FieldError id="edit-event-tickets-error">{fieldErrors.total_tickets}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-price">Price per ticket</label>
+          <input id="edit-event-price" name="ticket_price" type="number" min="0" step="0.01" value={form.ticket_price} onChange={updateField} className={fieldErrors.ticket_price ? 'input-error' : ''} />
+          <FieldError id="edit-event-price-error">{fieldErrors.ticket_price}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="edit-event-status">Status</label>
+          <select id="edit-event-status" name="status" value={form.status} onChange={updateField}>
+            <option value="draft">Draft</option>
+            <option value="published">Published</option>
+          </select>
+          <FieldError id="edit-event-status-error">{fieldErrors.status}</FieldError>
+        </div>
+        <fieldset className="event-tag-fieldset event-form-wide">
+          <legend>Tags <span className="optional-label">Optional</span></legend>
+          {metadata.loading ? (
+            <p className="metadata-help">Loading tagsâ€¦</p>
+          ) : metadata.tags.length === 0 ? (
+            <p className="metadata-help">No tags are available.</p>
+          ) : (
+            <div className="tag-options">
+              {metadata.tags.map((tag) => (
+                <button
+                  className={form.tag_ids.includes(tag.id) ? 'tag-option-selected' : ''}
+                  type="button"
+                  onClick={() => toggleTag(tag.id)}
+                  aria-pressed={form.tag_ids.includes(tag.id)}
+                  key={tag.id}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <FieldError id="edit-event-tags-error">{fieldErrors.tag_ids}</FieldError>
+        </fieldset>
+        <div className="modal-actions event-form-wide edit-event-actions">
+          <button className="destructive-button" type="button" onClick={handleCancelEvent} disabled={Boolean(action)}>
+            {action === 'cancelling' ? 'Cancelling event…' : 'Cancel event'}
+          </button>
+          <button className="secondary-button" type="button" onClick={onClose} disabled={Boolean(action)}>Discard changes</button>
+          <button className="primary-button" type="submit" disabled={Boolean(action)}>
+            {action === 'saving' && <span className="spinner" aria-hidden="true" />}
+            {action === 'saving' ? 'Saving changes…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function EventDetailsModal({
+  event,
+  tokens,
+  onClose,
+  onBooked,
+  onEdit,
+  onCancelled,
+  onSessionExpired,
+  onTokensChanged,
+  categoryName,
+  tagNames,
+  canEdit,
+  canCancel,
+}) {
+  const [showBooking, setShowBooking] = useState(false)
+  const [quantity, setQuantity] = useState('1')
+  const [fieldError, setFieldError] = useState(null)
+  const [formError, setFormError] = useState(null)
+  const [confirmation, setConfirmation] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const date = formatEventDate(event.event_datetime)
+  const available = Number(event.tickets_available)
+  const total = Number(event.total_tickets)
+  const requestedQuantity = Number(quantity)
+  const ticketPrice = Number(event.ticket_price)
+  const bookingTotal = Number.isInteger(requestedQuantity)
+    ? ticketPrice * requestedQuantity
+    : 0
+  const isUpcoming = new Date(event.event_datetime) > new Date()
+  const bookingStatus = event.current_user_booking_status
+  const isBookable = (
+    event.status === 'published' &&
+    isUpcoming &&
+    !bookingStatus
+  )
+
+  async function handleBooking(eventSubmit) {
+    eventSubmit.preventDefault()
+    if (
+      !Number.isInteger(requestedQuantity) ||
+      requestedQuantity < 1 ||
+      requestedQuantity > available
+    ) {
+      setFieldError(`Choose between 1 and ${available} ticket${available === 1 ? '' : 's'}.`)
+      return
+    }
+
+    setSubmitting(true)
+    setFieldError(null)
+    setFormError(null)
+    setConfirmation(null)
+    try {
+      const result = await createBooking({
+        tokens,
+        eventId: event.id,
+        quantity: requestedQuantity,
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      setConfirmation(
+        `${result.data.quantity} ticket${result.data.quantity === 1 ? '' : 's'} booked successfully.`,
+      )
+      setShowBooking(false)
+      onBooked(
+        result.data,
+        Math.max(0, available - Number(result.data.quantity)),
+      )
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['quantity'],
+        'We could not complete your booking. Please try again.',
+      )
+      setFieldError(apiErrors.fieldErrors.quantity)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleCancelEvent() {
+    if (cancelling || submitting) return
+
+    setCancelling(true)
+    setFormError(null)
+    try {
+      const result = await cancelEvent({ tokens, eventId: event.id })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onCancelled(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      setFormError(getResourceErrorMessage(error, 'the event cancellation'))
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  return (
+    <Modal titleId="event-detail-title" onClose={onClose} className="event-detail-modal">
+      <div className="event-detail-cover">
+        <span className="event-status">{event.status}</span>
+        <div className="event-date-tile">
+          <strong>{date.day}</strong>
+          <span>{date.month}</span>
+        </div>
+        <span className="event-cover-shape event-cover-shape-one" />
+        <span className="event-cover-shape event-cover-shape-two" />
+      </div>
+      <div className="event-detail-content">
+        <div className="event-detail-heading">
+          <div>
+            <p className="eyebrow">Event details</p>
+            <h1 id="event-detail-title">{event.title}</h1>
+          </div>
+          <strong className="event-detail-price">
+            {formatTicketPrice(event.ticket_price)}
+            {ticketPrice > 0 && <small> per ticket</small>}
+          </strong>
+        </div>
+
+        <div className="event-detail-facts">
+          <span><EventMetaIcon type="calendar" /><strong>{date.full}</strong><small>{formatEventTime(event.event_datetime)}</small></span>
+          <span><EventMetaIcon type="location" /><strong>{event.venue}</strong><small>Venue</small></span>
+          <span><EventMetaIcon type="organizer" /><strong>{event.organizer_name}</strong><small>Organizer</small></span>
+          <span><EventMetaIcon type="ticket" /><strong>{available} of {total}</strong><small>Tickets remaining</small></span>
+        </div>
+
+        <div className="event-detail-description">
+          <h2>About this event</h2>
+          <p>{event.description}</p>
+          {(categoryName || tagNames.length > 0) && (
+            <div className="event-detail-taxonomy">
+              {categoryName && <span>{categoryName}</span>}
+              {tagNames.map((tagName) => <span key={tagName}>#{tagName}</span>)}
+            </div>
+          )}
+        </div>
+
+        <Alert type="success">{confirmation}</Alert>
+        <Alert>{formError}</Alert>
+
+        {bookingStatus && (
+          <div className={`event-booking-notice event-booking-notice-${bookingStatus}`}>
+            <AppIcon type={bookingStatus === 'confirmed' ? 'check' : 'cancel'} />
+            <span>
+              {bookingStatus === 'confirmed'
+                ? 'You have a confirmed booking for this event.'
+                : 'You previously cancelled your booking for this event.'}
+            </span>
+          </div>
+        )}
+
+        {showBooking ? (
+          <form className="booking-form" onSubmit={handleBooking} noValidate>
+            <div>
+              <label htmlFor="booking-quantity">Number of tickets</label>
+              <div className={`quantity-control ${fieldError ? 'input-error' : ''}`}>
+                <button type="button" onClick={() => setQuantity(String(Math.max(1, requestedQuantity - 1 || 1)))} aria-label="Decrease ticket quantity">−</button>
+                <input id="booking-quantity" name="quantity" type="number" min="1" max={available} step="1" value={quantity} onChange={(changeEvent) => { setQuantity(changeEvent.target.value); setFieldError(null); setFormError(null) }} />
+                <button type="button" onClick={() => setQuantity(String(Math.min(available, (requestedQuantity || 0) + 1)))} aria-label="Increase ticket quantity">+</button>
+              </div>
+              <FieldError id="booking-quantity-error">{fieldError}</FieldError>
+            </div>
+            <div className="booking-total">
+              <span>Total</span>
+              <strong>{formatTicketPrice(bookingTotal)}</strong>
+            </div>
+            <div className="booking-form-actions">
+              <button className="secondary-button" type="button" onClick={() => setShowBooking(false)} disabled={submitting}>Back</button>
+              <button className="primary-button" type="submit" disabled={submitting || available === 0 || !isBookable}>
+                {submitting && <span className="spinner" aria-hidden="true" />}
+                {submitting ? 'Booking…' : 'Confirm booking'}
+              </button>
+            </div>
+          </form>
+        ) : canEdit ? (
+          <div className="event-detail-actions">
+            <p>You created this event. Manage its details or cancel it from the editor.</p>
+            <button className="primary-button" type="button" onClick={onEdit}>
+              Edit event
+            </button>
+          </div>
+        ) : (
+          <div className="event-detail-actions">
+            <p>
+              {bookingStatus === 'confirmed'
+                ? 'This event is already in your bookings.'
+                : bookingStatus === 'cancelled'
+                  ? 'A cancelled booking for this event remains in your booking history.'
+                  : !isBookable
+                ? 'This event is not currently available for booking.'
+                : available === 0
+                  ? 'This event is sold out.'
+                  : `${available} ticket${available === 1 ? '' : 's'} currently available.`}
+            </p>
+            <div className="event-detail-buttons">
+              <button className="primary-button" type="button" onClick={() => { setShowBooking(true); setConfirmation(null) }} disabled={!isBookable || available === 0 || Boolean(confirmation) || cancelling}>
+                {confirmation
+                  ? 'Booking confirmed'
+                  : bookingStatus === 'confirmed'
+                    ? 'Already booked'
+                    : bookingStatus === 'cancelled'
+                      ? 'Previously booked'
+                      : !isBookable
+                        ? 'Unavailable'
+                        : available === 0
+                          ? 'Sold out'
+                          : 'Book event'}
+              </button>
+              {canCancel && (
+                <button className="destructive-button" type="button" onClick={handleCancelEvent} disabled={cancelling || submitting}>
+                  {cancelling ? 'Cancelling…' : 'Cancel event'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+function useAuthenticatedWebSocket({
+  enabled = true,
+  tokens,
+  getSocketUrl,
+  onMessage,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const tokensRef = useRef(tokens)
+  const getSocketUrlRef = useRef(getSocketUrl)
+  const onMessageRef = useRef(onMessage)
+  const onSessionExpiredRef = useRef(onSessionExpired)
+  const onTokensChangedRef = useRef(onTokensChanged)
+  const handshakeRefreshAttemptedRef = useRef(false)
+  const accessToken = tokens?.access_token
+  const refreshToken = tokens?.refresh_token
+
+  useEffect(() => {
+    tokensRef.current = tokens
+    getSocketUrlRef.current = getSocketUrl
+    onMessageRef.current = onMessage
+    onSessionExpiredRef.current = onSessionExpired
+    onTokensChangedRef.current = onTokensChanged
+  }, [tokens, getSocketUrl, onMessage, onSessionExpired, onTokensChanged])
+
+  useEffect(() => {
+    handshakeRefreshAttemptedRef.current = false
+  }, [refreshToken])
+
+  useEffect(() => {
+    if (!enabled || !accessToken) return undefined
+
+    let socket = null
+    let reconnectTimer = null
+    let heartbeatTimer = null
+    let stopped = false
+    let retryAttempt = 0
+
+    function scheduleReconnect() {
+      if (stopped || reconnectTimer) return
+      retryAttempt += 1
+      const delay = Math.min(
+        2000 * 1.5 ** Math.min(retryAttempt, 5),
+        15000,
+      )
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null
+        connect()
+      }, delay)
+    }
+
+    async function refreshSocketToken() {
+      try {
+        const refreshed = await refreshAccessToken(
+          tokensRef.current.refresh_token,
+        )
+        const nextTokens = updateAccessToken(refreshed.access_token)
+        if (!nextTokens) throw new SessionExpiredError()
+
+        tokensRef.current = nextTokens
+        onTokensChangedRef.current?.(nextTokens)
+        return true
+      } catch (error) {
+        if (
+          error instanceof SessionExpiredError ||
+          (error instanceof ApiError && [401, 403].includes(error.status))
+        ) {
+          stopped = true
+          onSessionExpiredRef.current?.(
+            error instanceof ApiError && typeof error.payload?.detail === 'string'
+              ? error.payload.detail
+              : undefined,
+          )
+          return false
+        }
+
+        scheduleReconnect()
+        return false
+      }
+    }
+
+    async function connect() {
+      if (stopped) return
+
+      if (isAccessTokenExpired(tokensRef.current.access_token)) {
+        await refreshSocketToken()
+        return
+      }
+
+      let opened = false
+      socket = new WebSocket(
+        getSocketUrlRef.current(tokensRef.current.access_token),
+      )
+
+      socket.addEventListener('open', () => {
+        opened = true
+        retryAttempt = 0
+        handshakeRefreshAttemptedRef.current = false
+        heartbeatTimer = window.setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send('keepalive')
+        }, 30000)
+      })
+
+      socket.addEventListener('message', (message) => {
+        try {
+          onMessageRef.current?.(JSON.parse(message.data))
+        } catch {
+          // Ignore messages that are not valid JSON.
+        }
+      })
+
+      socket.addEventListener('close', async () => {
+        if (heartbeatTimer) {
+          window.clearInterval(heartbeatTimer)
+          heartbeatTimer = null
+        }
+        if (stopped) return
+
+        const needsTokenRefresh =
+          isAccessTokenExpired(tokensRef.current.access_token) ||
+          (!opened && !handshakeRefreshAttemptedRef.current)
+        if (needsTokenRefresh) {
+          handshakeRefreshAttemptedRef.current = true
+          await refreshSocketToken()
+          return
+        }
+
+        scheduleReconnect()
+      })
+    }
+
+    connect()
+    return () => {
+      stopped = true
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer)
+      socket?.close()
+    }
+  }, [accessToken, enabled])
+}
+
+function useEventAvailability({
+  tokens,
+  onAvailabilityUpdate,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const handleMessage = useCallback(
+    (payload) => {
+      const availability = payload?.data
+      if (
+        payload?.type === 'event_availability_updated' &&
+        typeof availability?.event_id === 'string' &&
+        Number.isInteger(availability.total_tickets) &&
+        Number.isInteger(availability.tickets_available)
+      ) {
+        onAvailabilityUpdate(availability)
+      }
+    },
+    [onAvailabilityUpdate],
+  )
+
+  useAuthenticatedWebSocket({
+    tokens,
+    getSocketUrl: getEventAvailabilitySocketUrl,
+    onMessage: handleMessage,
+    onSessionExpired,
+    onTokensChanged,
+  })
+}
+
+function useNotifications({
+  enabled,
+  tokens,
+  onNotificationReceived,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const handleMessage = useCallback(
+    (payload) => {
+      if (
+        payload?.type === 'notification' &&
+        payload?.data &&
+        typeof payload.data.id === 'string' &&
+        typeof payload.data.message === 'string'
+      ) {
+        onNotificationReceived(payload.data)
+      }
+    },
+    [onNotificationReceived],
+  )
+
+  useAuthenticatedWebSocket({
+    enabled,
+    tokens,
+    getSocketUrl: getNotificationSocketUrl,
+    onMessage: handleMessage,
+    onSessionExpired,
+    onTokensChanged,
+  })
+}
+
+function EventsPage({
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+  metadata,
+  currentUserId,
+  role,
+}) {
   const [page, setPage] = useState(1)
+  const [eventView, setEventView] = useState('published')
   const [eventPage, setEventPage] = useState(null)
-  const [activeTokens, setActiveTokens] = useState(tokens)
+  const [selectedEvent, setSelectedEvent] = useState(null)
+  const [editingEvent, setEditingEvent] = useState(null)
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [selectedTagIds, setSelectedTagIds] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
-  const claims = getAccessTokenClaims(activeTokens.access_token)
-  const role = typeof claims?.role === 'string' ? claims.role : 'user'
-  const profileInitial = role.charAt(0).toUpperCase()
+  const [actionNotice, setActionNotice] = useState('')
+  const tokensRef = useRef(tokens)
+  const canViewDrafts = ['organizer', 'admin'].includes(role)
+  const selectedTagKey = selectedTagIds.join('|')
+  const categoryNames = useMemo(
+    () => new Map(metadata.categories.map((item) => [item.id, item.name])),
+    [metadata.categories],
+  )
+  const tagNames = useMemo(
+    () => new Map(metadata.tags.map((item) => [item.id, item.name])),
+    [metadata.tags],
+  )
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    if (!actionNotice) return undefined
+    const timer = window.setTimeout(() => setActionNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [actionNotice])
+
+  const handleAvailabilityUpdate = useCallback((availability) => {
+    const applyAvailability = (event) =>
+      event.id === availability.event_id
+        ? {
+            ...event,
+            total_tickets: availability.total_tickets,
+            tickets_available: availability.tickets_available,
+          }
+        : event
+
+    setEventPage((current) =>
+      current
+        ? { ...current, items: current.items.map(applyAvailability) }
+        : current,
+    )
+    setSelectedEvent((current) =>
+      current ? applyAvailability(current) : current,
+    )
+  }, [])
+
+  useEventAvailability({
+    tokens,
+    onAvailabilityUpdate: handleAvailabilityUpdate,
+    onSessionExpired,
+    onTokensChanged,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -785,10 +2233,18 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
       setError(null)
 
       try {
-        const response = await listEvents({
-          accessToken: activeTokens.access_token,
+        const loadEvents = eventView === 'drafts'
+          ? listDraftEvents
+          : eventView === 'completed'
+            ? listCompletedEvents
+            : listEvents
+        const result = await loadEvents({
+          tokens: tokensRef.current,
           page,
+          categoryId: selectedCategoryId,
+          tagIds: selectedTagKey ? selectedTagKey.split('|') : [],
         })
+        const response = result.data
 
         if (!validateEventPage(response)) {
           throw new UnexpectedEventResponseError(
@@ -797,55 +2253,20 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
         }
 
         if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
           setEventPage(response)
           setLoading(false)
         }
       } catch (requestError) {
         if (cancelled) return
 
-        if (requestError instanceof ApiError && requestError.status === 401) {
-          try {
-            const refreshed = await refreshAccessToken(
-              activeTokens.refresh_token,
-            )
-            const nextTokens = updateAccessToken(refreshed.access_token)
-
-            if (!nextTokens) {
-              onSessionExpired('Your session has expired. Please log in again.')
-              return
-            }
-
-            if (!cancelled) setActiveTokens(nextTokens)
-          } catch (refreshError) {
-            if (cancelled) return
-
-            if (
-              refreshError instanceof ApiError &&
-              [401, 403].includes(refreshError.status)
-            ) {
-              onSessionExpired(
-                typeof refreshError.payload?.detail === 'string'
-                  ? refreshError.payload.detail
-                  : 'Your session has expired. Please log in again.',
-              )
-              return
-            }
-
-            setError(getEventErrorMessage(refreshError))
-            setLoading(false)
-          }
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
           return
         }
-
-        if (requestError instanceof ApiError && requestError.status === 403) {
-          onSessionExpired(
-            typeof requestError.payload?.detail === 'string'
-              ? requestError.payload.detail
-              : 'Your account cannot access events.',
-          )
-          return
-        }
-
         setError(getEventErrorMessage(requestError))
         setLoading(false)
       }
@@ -855,16 +2276,21 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
     return () => {
       cancelled = true
     }
-  }, [activeTokens, onSessionExpired, page, retryCount])
+  }, [
+    onSessionExpired,
+    onTokensChanged,
+    eventView,
+    page,
+    retryCount,
+    selectedCategoryId,
+    selectedTagKey,
+  ])
 
   const firstVisibleItem = eventPage?.total_items
     ? (eventPage.page - 1) * eventPage.page_size + 1
     : 0
   const lastVisibleItem = eventPage?.total_items
-    ? Math.min(
-        eventPage.page * eventPage.page_size,
-        eventPage.total_items,
-      )
+    ? Math.min(eventPage.page * eventPage.page_size, eventPage.total_items)
     : 0
 
   function changePage(nextPage) {
@@ -879,47 +2305,223 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
     }
 
     setPage(nextPage)
+    setSelectedEvent(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  return (
-    <main className="events-page">
-      <header className="events-header">
-        <BrandMark />
-        <div className="events-header-actions">
-          <button
-            className="logout-button"
-            type="button"
-            onClick={onLogout}
-            disabled={loggingOut}
-          >
-            {loggingOut ? 'Logging out...' : 'Log out'}
-          </button>
-          <button
-            className="profile-button"
-            type="button"
-            aria-label={`${role} profile. Profile page coming soon.`}
-            title="Profile coming soon"
-          >
-            {profileInitial}
-          </button>
-        </div>
-      </header>
+  const handleBooked = useCallback((booking, remainingTickets) => {
+    setEventPage((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        items: current.items.map((event) =>
+          event.id === booking.event_id
+            ? {
+                ...event,
+                tickets_available: Math.min(
+                  Number(event.tickets_available),
+                  remainingTickets,
+                ),
+                current_user_booking_status: 'confirmed',
+              }
+            : event,
+        ),
+      }
+    })
+    setSelectedEvent((current) =>
+      current?.id === booking.event_id
+        ? {
+            ...current,
+            tickets_available: Math.min(
+              Number(current.tickets_available),
+              remainingTickets,
+            ),
+            current_user_booking_status: 'confirmed',
+          }
+        : current,
+    )
+  }, [])
 
-      <section className="events-content" aria-labelledby="events-title">
+  const handleEventUpdated = useCallback((updatedEvent) => {
+    setEventPage((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((item) =>
+              item.id === updatedEvent.id ? updatedEvent : item,
+            ),
+          }
+        : current,
+    )
+    setSelectedEvent(null)
+    setEditingEvent(null)
+    setActionNotice(`${updatedEvent.title} was updated.`)
+    setRetryCount((count) => count + 1)
+  }, [])
+
+  const handleEventCancelled = useCallback((cancelledEvent) => {
+    setSelectedEvent(null)
+    setEditingEvent(null)
+    setActionNotice(`${cancelledEvent.title} was cancelled.`)
+    setRetryCount((count) => count + 1)
+  }, [])
+
+  function selectCategory(event) {
+    setSelectedCategoryId(event.target.value)
+    setPage(1)
+    setSelectedEvent(null)
+  }
+
+  function toggleFilterTag(tagId) {
+    setSelectedTagIds((current) =>
+      current.includes(tagId)
+        ? current.filter((id) => id !== tagId)
+        : [...current, tagId],
+    )
+    setPage(1)
+    setSelectedEvent(null)
+  }
+
+  function clearFilters() {
+    setSelectedCategoryId('')
+    setSelectedTagIds([])
+    setPage(1)
+    setSelectedEvent(null)
+  }
+
+  function changeEventView(nextView) {
+    if (nextView === eventView || (nextView === 'drafts' && !canViewDrafts)) {
+      return
+    }
+    setEventView(nextView)
+    setPage(1)
+    setSelectedEvent(null)
+    setEditingEvent(null)
+    setActionNotice('')
+  }
+
+  const filtersActive = Boolean(selectedCategoryId || selectedTagIds.length)
+
+  return (
+    <section className="events-content" aria-labelledby="events-title">
         <div className="events-intro">
           <div>
-            <p className="eyebrow">Upcoming experiences</p>
-            <h1 id="events-title">Explore events</h1>
-            <p>Find something worth showing up for.</p>
+            <p className="eyebrow">
+              {eventView === 'drafts'
+                ? 'Event management'
+                : eventView === 'completed'
+                  ? 'Past experiences'
+                  : 'Upcoming experiences'}
+            </p>
+            <h1 id="events-title">
+              {eventView === 'drafts'
+                ? 'Draft events'
+                : eventView === 'completed'
+                  ? 'Completed events'
+                  : 'Explore events'}
+            </h1>
+            <p>
+              {eventView === 'drafts'
+                ? role === 'admin'
+                  ? 'Review unpublished events from every organizer.'
+                  : 'Finish and publish the events you are preparing.'
+                : eventView === 'completed'
+                  ? 'Browse events that have already taken place.'
+                : 'Find something worth showing up for.'}
+            </p>
           </div>
           {!loading && eventPage && (
             <p className="events-count">
               {eventPage.total_items}{' '}
-              {eventPage.total_items === 1 ? 'event' : 'events'} available
+              {eventView === 'drafts'
+                ? eventPage.total_items === 1 ? 'draft event' : 'draft events'
+                : eventView === 'completed'
+                  ? eventPage.total_items === 1 ? 'past event' : 'past events'
+                : `${eventPage.total_items === 1 ? 'event' : 'events'} available`}
             </p>
           )}
         </div>
+
+        <div className="event-view-tabs" role="tablist" aria-label="Event views">
+          <button
+            className={eventView === 'published' ? 'event-view-tab-active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={eventView === 'published'}
+            onClick={() => changeEventView('published')}
+          >
+            Published events
+          </button>
+          {canViewDrafts && (
+            <button
+              className={eventView === 'drafts' ? 'event-view-tab-active' : ''}
+              type="button"
+              role="tab"
+              aria-selected={eventView === 'drafts'}
+              onClick={() => changeEventView('drafts')}
+            >
+              Draft events
+            </button>
+          )}
+          <button
+            className={eventView === 'completed' ? 'event-view-tab-active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={eventView === 'completed'}
+            onClick={() => changeEventView('completed')}
+          >
+            Past events
+          </button>
+        </div>
+
+        <div className="event-filters" aria-label="Filter events">
+          <div className="event-category-filter">
+            <label htmlFor="event-filter-category">Category</label>
+            <select
+              id="event-filter-category"
+              value={selectedCategoryId}
+              onChange={selectCategory}
+              disabled={metadata.loading}
+            >
+              <option value="">All categories</option>
+              {metadata.categories.map((category) => (
+                <option value={category.id} key={category.id}>{category.name}</option>
+              ))}
+            </select>
+          </div>
+          <fieldset className="event-tag-filters">
+            <legend>Tags <small>Events must match every selected tag</small></legend>
+            <div>
+              {metadata.loading ? (
+                <span className="filter-message">Loading filters…</span>
+              ) : metadata.tags.length === 0 ? (
+                <span className="filter-message">No tags available</span>
+              ) : metadata.tags.map((tag) => (
+                <button
+                  className={selectedTagIds.includes(tag.id) ? 'filter-tag-selected' : ''}
+                  type="button"
+                  onClick={() => toggleFilterTag(tag.id)}
+                  aria-pressed={selectedTagIds.includes(tag.id)}
+                  key={tag.id}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          {filtersActive && (
+            <button className="clear-filters" type="button" onClick={clearFilters}>
+              Clear filters
+            </button>
+          )}
+        </div>
+        {metadata.error && (
+          <div className="metadata-filter-error" role="alert">
+            <span>{metadata.error}</span>
+            <button type="button" onClick={metadata.retry}>Try again</button>
+          </div>
+        )}
+        {actionNotice && <Alert type="success">{actionNotice}</Alert>}
 
         {error ? (
           <div className="events-state events-error" role="alert">
@@ -939,14 +2541,42 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
         ) : eventPage.items.length === 0 ? (
           <div className="events-state">
             <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
-            <h2>No upcoming events yet</h2>
-            <p>Published events will appear here as soon as they are available.</p>
+            <h2>
+              {filtersActive
+                ? 'No events match these filters'
+                : eventView === 'drafts'
+                  ? 'No draft events'
+                  : eventView === 'completed'
+                    ? 'No completed events yet'
+                  : 'No upcoming events yet'}
+            </h2>
+            <p>
+              {filtersActive
+                ? 'Try removing a category or tag filter.'
+                : eventView === 'drafts'
+                  ? role === 'admin'
+                    ? 'There are no unpublished events to review.'
+                    : 'Events saved as drafts will appear here.'
+                  : eventView === 'completed'
+                    ? 'Completed events will appear here after they have taken place.'
+                  : 'Published events will appear here as soon as they are available.'}
+            </p>
           </div>
         ) : (
           <>
             <div className="events-grid">
               {eventPage.items.map((event, index) => (
-                <EventCard event={event} index={index} key={event.id} />
+                <EventCard
+                  event={event}
+                  index={index}
+                  onSelect={setSelectedEvent}
+                  categoryName={categoryNames.get(event.category_id)}
+                  isOwned={
+                    ['organizer', 'admin'].includes(role) &&
+                    event.organizer_id === currentUserId
+                  }
+                  key={event.id}
+                />
               ))}
             </div>
 
@@ -979,8 +2609,2463 @@ function EventsPage({ tokens, onLogout, loggingOut, onSessionExpired }) {
             </nav>
           </>
         )}
+        {selectedEvent && (
+          <EventDetailsModal
+            event={selectedEvent}
+            tokens={tokens}
+            onClose={() => setSelectedEvent(null)}
+            onBooked={handleBooked}
+            onEdit={() => {
+              setEditingEvent(selectedEvent)
+              setSelectedEvent(null)
+            }}
+            onCancelled={handleEventCancelled}
+            onSessionExpired={onSessionExpired}
+            onTokensChanged={onTokensChanged}
+            categoryName={categoryNames.get(selectedEvent.category_id)}
+            tagNames={selectedEvent.tag_ids
+              .map((tagId) => tagNames.get(tagId))
+              .filter(Boolean)}
+            canEdit={
+              ['organizer', 'admin'].includes(role) &&
+              selectedEvent.organizer_id === currentUserId &&
+              ['draft', 'published'].includes(selectedEvent.status)
+            }
+            canCancel={
+              selectedEvent.status !== 'cancelled' &&
+              selectedEvent.status !== 'completed' &&
+              (role === 'admin' || (
+                role === 'organizer' &&
+                selectedEvent.organizer_id === currentUserId
+              ))
+            }
+          />
+        )}
+        {editingEvent && (
+          <EditEventModal
+            event={editingEvent}
+            tokens={tokens}
+            onClose={() => setEditingEvent(null)}
+            onUpdated={handleEventUpdated}
+            onCancelled={handleEventCancelled}
+            onSessionExpired={onSessionExpired}
+            onTokensChanged={onTokensChanged}
+            metadata={metadata}
+          />
+        )}
+    </section>
+  )
+}
+
+function formatDateTime(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Date unavailable'
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+function shortId(value) {
+  return typeof value === 'string' ? value.slice(0, 8) : 'Unknown'
+}
+
+function RatingStars({ rating, onChange }) {
+  const interactive = typeof onChange === 'function'
+
+  return (
+    <div
+      className={`review-stars ${interactive ? 'review-stars-interactive' : ''}`}
+      aria-label={interactive ? 'Choose a rating out of 5 stars' : `${rating} out of 5 stars`}
+      role={interactive ? 'group' : 'img'}
+    >
+      {[1, 2, 3, 4, 5].map((value) =>
+        interactive ? (
+          <button
+            className={value <= rating ? 'review-star-active' : ''}
+            type="button"
+            onClick={() => onChange(value)}
+            aria-label={`${value} star${value === 1 ? '' : 's'}`}
+            aria-pressed={rating === value}
+            key={value}
+          >
+            ★
+          </button>
+        ) : (
+          <span className={value <= rating ? 'review-star-active' : ''} key={value}>
+            ★
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
+function ReviewModal({
+  booking,
+  tokens,
+  onClose,
+  onSaved,
+  onDeleted,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const existingReview = booking.review
+  const [rating, setRating] = useState(existingReview?.rating || 0)
+  const [comment, setComment] = useState(existingReview?.comment || '')
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const busy = submitting || deleting
+  const closeWhenIdle = () => {
+    if (!busy) onClose()
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const normalizedComment = comment.trim()
+    const errors = {}
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      errors.rating = 'Choose a rating from 1 to 5 stars.'
+    }
+    if (!normalizedComment) {
+      errors.comment = 'Write a review before submitting.'
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = existingReview
+        ? await updateReview({
+            tokens,
+            reviewId: existingReview.id,
+            rating,
+            comment: normalizedComment,
+          })
+        : await createReview({
+            tokens,
+            bookingId: booking.id,
+            rating,
+            comment: normalizedComment,
+          })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onSaved(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['rating', 'comment'],
+        `We could not ${existingReview ? 'update' : 'publish'} your review. Please try again.`,
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!existingReview || deleting) return
+
+    setDeleting(true)
+    setFormError(null)
+    try {
+      const result = await deleteReview({
+        tokens,
+        reviewId: existingReview.id,
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onDeleted()
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      setConfirmDelete(false)
+      setFormError(
+        error instanceof ApiError && typeof error.payload?.detail === 'string'
+          ? error.payload.detail
+          : 'We could not delete your review. Please try again.',
+      )
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Modal
+      titleId="review-modal-title"
+      onClose={closeWhenIdle}
+      className="form-modal review-modal"
+    >
+      <div className="modal-heading">
+        <p className="eyebrow">{existingReview ? 'Your feedback' : 'Share your experience'}</p>
+        <h1 id="review-modal-title">
+          {existingReview ? 'Edit review' : 'Leave a review'}
+        </h1>
+        <p>{booking.event_title}</p>
+      </div>
+      <Alert>{formError}</Alert>
+      {existingReview?.replies?.length > 0 && (
+        <div className="review-modal-replies">
+          <span>Replies to your review</span>
+          {existingReview.replies.map((reply) => (
+            <div className={`review-reply review-reply-${reply.replier_role}`} key={reply.id}>
+              <div>
+                <strong>{reply.replier_role === 'admin' ? 'Admin reply' : 'Organizer reply'}</strong>
+                <time dateTime={reply.created_at}>{formatDateTime(reply.created_at)}</time>
+              </div>
+              <p>{reply.body}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <form className="review-form" onSubmit={handleSubmit} noValidate>
+        <fieldset className="review-rating-field">
+          <legend>Rating</legend>
+          <RatingStars
+            rating={rating}
+            onChange={(value) => {
+              setRating(value)
+              setFieldErrors((current) => ({ ...current, rating: undefined }))
+              setFormError(null)
+            }}
+          />
+          <FieldError id="review-rating-error">{fieldErrors.rating}</FieldError>
+        </fieldset>
+        <div className="form-field">
+          <label htmlFor="review-comment">Review</label>
+          <textarea
+            id="review-comment"
+            name="comment"
+            value={comment}
+            onChange={(event) => {
+              setComment(event.target.value)
+              setFieldErrors((current) => ({ ...current, comment: undefined }))
+              setFormError(null)
+            }}
+            className={fieldErrors.comment ? 'input-error' : ''}
+            placeholder="What did you think of the event?"
+            rows={5}
+          />
+          <FieldError id="review-comment-error">{fieldErrors.comment}</FieldError>
+        </div>
+
+        {confirmDelete && (
+          <div className="review-delete-confirmation" role="alert">
+            <div>
+              <strong>Delete this review?</strong>
+              <p>Your rating, comment, and all replies will be permanently removed.</p>
+            </div>
+            <div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+              >
+                Keep review
+              </button>
+              <button
+                className="destructive-button"
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="modal-actions review-form-actions">
+          {existingReview && !confirmDelete && (
+            <button
+              className="destructive-button"
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              disabled={busy}
+            >
+              Delete review
+            </button>
+          )}
+          <button className="secondary-button" type="button" onClick={closeWhenIdle} disabled={busy}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit" disabled={busy || confirmDelete}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Saving…' : existingReview ? 'Save changes' : 'Publish review'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function canCancelListedBooking(booking) {
+  return (
+    booking.status === 'confirmed' &&
+    !['cancelled', 'completed'].includes(booking.event_status)
+  )
+}
+
+function getBookingEventNotice(eventStatus) {
+  if (eventStatus === 'draft') {
+    return 'The organizer has moved this event back to draft.'
+  }
+  if (eventStatus === 'cancelled') {
+    return 'This event has been cancelled. The booking is retained for your records.'
+  }
+  if (eventStatus === 'completed') {
+    return 'This event has been completed. The booking is retained for your records.'
+  }
+  return null
+}
+
+function BookingDetailsModal({ booking, onClose, bookingOwnerName = '' }) {
+  const date = formatEventDate(booking.event_datetime)
+  const eventNotice = getBookingEventNotice(booking.event_status)
+
+  return (
+    <Modal
+      titleId="booking-detail-title"
+      onClose={onClose}
+      className="booking-detail-modal"
+    >
+      <div className="modal-heading booking-detail-heading">
+        <p className="eyebrow">Booking details</p>
+        <h1 id="booking-detail-title">{booking.event_title}</h1>
+        <p>
+          {bookingOwnerName
+            ? `Reservation held by ${bookingOwnerName}.`
+            : 'Your reservation and event information.'}
+        </p>
+      </div>
+
+      <div className="booking-detail-statuses">
+        <span className={`status-badge status-${booking.status}`}>
+          {booking.status === 'confirmed'
+            ? 'Booking confirmed'
+            : 'Booking cancelled'}
+        </span>
+        {booking.event_status !== 'published' && (
+          <span className={`event-state-badge event-state-${booking.event_status}`}>
+            Event {booking.event_status}
+          </span>
+        )}
+      </div>
+
+      {eventNotice && (
+        <p className={`booking-detail-notice booking-detail-notice-${booking.event_status}`}>
+          {eventNotice}
+        </p>
+      )}
+
+      <div className="booking-detail-facts">
+        <div>
+          <EventMetaIcon type="calendar" />
+          <span>Starts</span>
+          <strong>{date.full} at {formatEventTime(booking.event_datetime)}</strong>
+        </div>
+        <div>
+          <EventMetaIcon type="location" />
+          <span>Venue</span>
+          <strong>{booking.event_venue}</strong>
+        </div>
+        <div>
+          <EventMetaIcon type="organizer" />
+          <span>Organizer</span>
+          <strong>{booking.event_organizer_name}</strong>
+        </div>
+        <div>
+          <EventMetaIcon type="ticket" />
+          <span>Tickets booked</span>
+          <strong>{booking.quantity}</strong>
+        </div>
+      </div>
+
+      <div className="booking-detail-record">
+        <span>Booked</span>
+        <strong>{formatDateTime(booking.booked_at)}</strong>
+        {booking.cancelled_at && (
+          <>
+            <span>Booking cancelled</span>
+            <strong>{formatDateTime(booking.cancelled_at)}</strong>
+          </>
+        )}
+        <span>Booking reference</span>
+        <strong>{booking.id}</strong>
+      </div>
+    </Modal>
+  )
+}
+
+function validateBookingPage(payload) {
+  return (
+    payload &&
+    Array.isArray(payload.items) &&
+    payload.items.every(
+      (booking) =>
+        typeof booking?.event_title === 'string' &&
+        typeof booking.event_venue === 'string' &&
+        typeof booking.event_datetime === 'string' &&
+        !Number.isNaN(new Date(booking.event_datetime).getTime()) &&
+        typeof booking.event_organizer_name === 'string' &&
+        booking.event_organizer_name.trim().length > 0 &&
+        ['draft', 'published', 'cancelled', 'completed'].includes(
+          booking.event_status,
+        ) &&
+        (booking.review === null ||
+          (typeof booking.review?.id === 'string' &&
+            booking.review.booking_id === booking.id &&
+            Number.isInteger(booking.review.rating) &&
+            booking.review.rating >= 1 &&
+            booking.review.rating <= 5 &&
+            typeof booking.review.comment === 'string' &&
+            Array.isArray(booking.review.replies) &&
+            booking.review.replies.every(
+              (reply) =>
+                typeof reply?.id === 'string' &&
+                ['organizer', 'admin'].includes(reply.replier_role) &&
+                typeof reply.body === 'string',
+            ))),
+    ) &&
+    payload.page_size === 5 &&
+    Number.isInteger(payload.page) &&
+    Number.isInteger(payload.total_items) &&
+    Number.isInteger(payload.total_pages)
+  )
+}
+
+function BookingsPage({ tokens, onSessionExpired, onTokensChanged }) {
+  const [page, setPage] = useState(1)
+  const [bookingPage, setBookingPage] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [cancellingBookingId, setCancellingBookingId] = useState(null)
+  const [bookingToCancel, setBookingToCancel] = useState(null)
+  const [selectedBooking, setSelectedBooking] = useState(null)
+  const [reviewBooking, setReviewBooking] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadBookings() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listBookings({ tokens: tokensRef.current, page })
+        if (!validateBookingPage(result.data)) {
+          throw new Error('Invalid paginated booking response.')
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setBookingPage(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, 'your bookings'))
+        setLoading(false)
+      }
+    }
+
+    loadBookings()
+    return () => { cancelled = true }
+  }, [onSessionExpired, onTokensChanged, page, retryCount])
+
+  function changePage(nextPage) {
+    if (
+      loading ||
+      !bookingPage ||
+      nextPage < 1 ||
+      nextPage > bookingPage.total_pages
+    ) return
+
+    setPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function requestBookingCancellation(booking) {
+    if (!canCancelListedBooking(booking) || cancellingBookingId) return
+
+    setActionError(null)
+    setBookingToCancel(booking)
+  }
+
+  async function handleCancelBooking() {
+    const booking = bookingToCancel
+    if (!booking || !canCancelListedBooking(booking) || cancellingBookingId) return
+
+    setCancellingBookingId(booking.id)
+    setActionError(null)
+    try {
+      const result = await cancelBooking({
+        tokens: tokensRef.current,
+        bookingId: booking.id,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      setBookingPage((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === booking.id ? result.data : item,
+              ),
+            }
+          : current,
+      )
+      setBookingToCancel(null)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(getResourceErrorMessage(requestError, 'the booking cancellation'))
+    } finally {
+      setCancellingBookingId(null)
+    }
+  }
+
+  function updateBookingReview(bookingId, review) {
+    setBookingPage((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((booking) =>
+              booking.id === bookingId ? { ...booking, review } : booking,
+            ),
+          }
+        : current,
+    )
+  }
+
+  function handleReviewSaved(review) {
+    if (!reviewBooking) return
+    updateBookingReview(reviewBooking.id, {
+      ...review,
+      replies: reviewBooking.review?.replies || [],
+    })
+    setReviewBooking(null)
+  }
+
+  function handleReviewDeleted() {
+    if (!reviewBooking) return
+    updateBookingReview(reviewBooking.id, null)
+    setReviewBooking(null)
+  }
+
+  return (
+    <section className="events-content" aria-labelledby="bookings-title">
+      <div className="events-intro">
+        <div>
+          <p className="eyebrow">Your reservations</p>
+          <h1 id="bookings-title">My bookings</h1>
+          <p>Keep track of every event you have booked.</p>
+        </div>
+        {!loading && bookingPage && (
+          <p className="events-count">{bookingPage.total_items} total</p>
+        )}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Bookings could not be loaded"
+          message={error}
+          onRetry={() => setRetryCount((count) => count + 1)}
+        />
+      ) : loading ? (
+        <div className="booking-list" aria-label="Loading bookings" aria-busy="true">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div
+              className="booking-card booking-card-skeleton skeleton-block"
+              key={index}
+            />
+          ))}
+        </div>
+      ) : bookingPage.items.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No bookings yet</h2>
+          <p>Your event reservations will appear here.</p>
+        </div>
+      ) : (
+        <>
+          <Alert>{actionError}</Alert>
+          <div className="booking-list">
+            {bookingPage.items.map((booking) => (
+              <article className="booking-card" key={booking.id}>
+                <button
+                  className="booking-details-trigger"
+                  type="button"
+                  onClick={() => setSelectedBooking(booking)}
+                  aria-label={`View booking details for ${booking.event_title}`}
+                >
+                  <div className="booking-icon"><AppIcon type="bookings" /></div>
+                  <div className="booking-main">
+                    <div className="booking-heading">
+                      <h2 title={booking.event_id}>
+                        {booking.event_title || `Event ${shortId(booking.event_id)}`}
+                      </h2>
+                      <span className={`status-badge status-${booking.status}`}>
+                        {booking.status === 'confirmed'
+                          ? 'Booking confirmed'
+                          : 'Booking cancelled'}
+                      </span>
+                      {booking.event_status !== 'published' && (
+                        <span className={`event-state-badge event-state-${booking.event_status}`}>
+                          Event {booking.event_status}
+                        </span>
+                      )}
+                    </div>
+                    <div className="booking-event-summary">
+                      <span>{formatDateTime(booking.event_datetime)}</span>
+                      <span>{booking.event_venue}</span>
+                      <span>Organized by {booking.event_organizer_name}</span>
+                    </div>
+                    {getBookingEventNotice(booking.event_status) && (
+                      <p className={`booking-event-notice booking-event-notice-${booking.event_status}`}>
+                        {getBookingEventNotice(booking.event_status)}
+                      </p>
+                    )}
+                    <small>
+                      Booked {formatDateTime(booking.booked_at)} · View details →
+                    </small>
+                    {booking.cancelled_at && (
+                      <small className="booking-cancelled">
+                        Booking cancelled {formatDateTime(booking.cancelled_at)}
+                      </small>
+                    )}
+                  </div>
+                  <div className="booking-quantity">
+                    <span>Tickets</span>
+                    <strong>{booking.quantity}</strong>
+                  </div>
+                </button>
+                <div className="booking-actions">
+                  {booking.review ? (
+                    <button
+                      className="secondary-button review-booking-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setReviewBooking(booking)
+                      }}
+                    >
+                      Edit review
+                    </button>
+                  ) : booking.status === 'confirmed' && booking.event_status === 'completed' ? (
+                    <button
+                      className="secondary-button review-booking-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setReviewBooking(booking)
+                      }}
+                    >
+                      Leave a review
+                    </button>
+                  ) : null}
+                  {booking.status === 'cancelled' ? (
+                    <span className="read-status-label">Cancelled</span>
+                  ) : canCancelListedBooking(booking) ? (
+                    <button
+                      className="destructive-button"
+                      type="button"
+                      onClick={() => requestBookingCancellation(booking)}
+                      disabled={Boolean(cancellingBookingId)}
+                    >
+                      {cancellingBookingId === booking.id
+                        ? 'Cancelling…'
+                        : 'Cancel booking'}
+                    </button>
+                  ) : (
+                    <span className="read-status-label">Cancellation unavailable</span>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+          <Pagination
+            pageData={bookingPage}
+            loading={loading}
+            onChange={changePage}
+            label="Booking"
+          />
+        </>
+      )}
+      {selectedBooking && (
+        <BookingDetailsModal
+          booking={selectedBooking}
+          onClose={() => setSelectedBooking(null)}
+        />
+      )}
+      {bookingToCancel && (
+        <ConfirmationModal
+          title="Cancel this booking?"
+          description={`This will cancel your reservation for ${bookingToCancel.quantity} ticket${bookingToCancel.quantity === 1 ? '' : 's'}. The ticket${bookingToCancel.quantity === 1 ? '' : 's'} will be returned to the event.`}
+          confirmLabel="Cancel booking"
+          cancelLabel="Keep booking"
+          onClose={() => setBookingToCancel(null)}
+          onConfirm={handleCancelBooking}
+          submitting={cancellingBookingId === bookingToCancel.id}
+        />
+      )}
+      {reviewBooking && (
+        <ReviewModal
+          booking={reviewBooking}
+          tokens={tokens}
+          onClose={() => setReviewBooking(null)}
+          onSaved={handleReviewSaved}
+          onDeleted={handleReviewDeleted}
+          onSessionExpired={onSessionExpired}
+          onTokensChanged={onTokensChanged}
+        />
+      )}
+    </section>
+  )
+}
+
+function useProtectedList({
+  tokens,
+  load,
+  resource,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadData() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await load({ tokens: tokensRef.current })
+        if (!Array.isArray(result.data)) {
+          throw new Error(`Invalid ${resource} response.`)
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setData(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, resource))
+        setLoading(false)
+      }
+    }
+
+    loadData()
+    return () => { cancelled = true }
+  }, [load, onSessionExpired, onTokensChanged, resource, retryCount])
+
+  return {
+    data,
+    setData,
+    loading,
+    error,
+    retry: () => setRetryCount((count) => count + 1),
+  }
+}
+
+function validateReviewGroups(payload) {
+  return (
+    Array.isArray(payload) &&
+    payload.every(
+      (group) =>
+        typeof group?.event_id === 'string' &&
+        typeof group.event_title === 'string' &&
+        ['draft', 'published', 'cancelled', 'completed'].includes(group.event_status) &&
+        typeof group.organizer_id === 'string' &&
+        typeof group.organizer_name === 'string' &&
+        Array.isArray(group.reviews) &&
+        group.reviews.every(
+          (review) =>
+            typeof review?.id === 'string' &&
+            typeof review.booking_id === 'string' &&
+            typeof review.reviewer_id === 'string' &&
+            typeof review.reviewer_name === 'string' &&
+            Number.isInteger(review.rating) &&
+            review.rating >= 1 &&
+            review.rating <= 5 &&
+            typeof review.comment === 'string' &&
+            Array.isArray(review.replies) &&
+            review.replies.every(
+              (reply) =>
+                typeof reply?.id === 'string' &&
+                reply.review_id === review.id &&
+                ['organizer', 'admin'].includes(reply.replier_role) &&
+                typeof reply.body === 'string',
+            ),
+        ),
+    )
+  )
+}
+
+function ReplyModal({
+  review,
+  eventTitle,
+  tokens,
+  onClose,
+  onReplied,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [body, setBody] = useState('')
+  const [fieldError, setFieldError] = useState(null)
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const closeWhenIdle = () => {
+    if (!submitting) onClose()
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const normalizedBody = body.trim()
+    if (!normalizedBody) {
+      setFieldError('Write a reply before submitting.')
+      setFormError('Please correct the highlighted field and try again.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldError(null)
+    setFormError(null)
+    try {
+      const result = await createReviewReply({
+        tokens,
+        reviewId: review.id,
+        body: normalizedBody,
+      })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onReplied(result.data)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['body'],
+        'We could not publish this reply. Please try again.',
+      )
+      setFieldError(apiErrors.fieldErrors.body)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal
+      titleId="reply-modal-title"
+      onClose={closeWhenIdle}
+      className="form-modal reply-modal"
+    >
+      <div className="modal-heading">
+        <p className="eyebrow">Respond to feedback</p>
+        <h1 id="reply-modal-title">Reply to review</h1>
+        <p>{eventTitle} · Review by {review.reviewer_name}</p>
+      </div>
+      <div className="reply-review-preview">
+        <RatingStars rating={review.rating} />
+        <p>{review.comment}</p>
+      </div>
+      <Alert>{formError}</Alert>
+      <form className="review-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field">
+          <label htmlFor="reply-body">Your reply</label>
+          <textarea
+            id="reply-body"
+            name="body"
+            value={body}
+            onChange={(event) => {
+              setBody(event.target.value)
+              setFieldError(null)
+              setFormError(null)
+            }}
+            className={fieldError ? 'input-error' : ''}
+            placeholder="Thank the attendee or address their feedback"
+            rows={5}
+          />
+          <FieldError id="reply-body-error">{fieldError}</FieldError>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={closeWhenIdle} disabled={submitting}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Publishing…' : 'Publish reply'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function ReviewsPage({
+  tokens,
+  role,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const {
+    data: reviewGroups,
+    setData: setReviewGroups,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({
+    tokens,
+    onSessionExpired,
+    onTokensChanged,
+    load: listEventReviews,
+    resource: 'event reviews',
+  })
+  const [replyTarget, setReplyTarget] = useState(null)
+
+  const validGroups = reviewGroups && validateReviewGroups(reviewGroups)
+    ? reviewGroups
+    : null
+  const totalReviews = validGroups?.reduce(
+    (total, group) => total + group.reviews.length,
+    0,
+  ) || 0
+
+  function handleReplied(reply) {
+    if (!replyTarget) return
+    setReviewGroups((current) =>
+      current?.map((group) =>
+        group.event_id !== replyTarget.event.event_id
+          ? group
+          : {
+              ...group,
+              reviews: group.reviews.map((review) =>
+                review.id === replyTarget.review.id
+                  ? { ...review, replies: [...review.replies, reply] }
+                  : review,
+              ),
+            },
+      ),
+    )
+    setReplyTarget(null)
+  }
+
+  if (!loading && reviewGroups && !validGroups) {
+    return (
+      <section className="events-content" aria-labelledby="reviews-title">
+        <ResourceError
+          title="Reviews could not be loaded"
+          message="The server returned an invalid review response."
+          onRetry={retry}
+        />
       </section>
-    </main>
+    )
+  }
+
+  return (
+    <section className="events-content reviews-content" aria-labelledby="reviews-title">
+      <div className="events-intro reviews-intro">
+        <div>
+          <p className="eyebrow">Event feedback</p>
+          <h1 id="reviews-title">Reviews</h1>
+          <p>
+            {role === 'admin'
+              ? 'See attendee feedback across every event and respond as an admin.'
+              : 'See attendee feedback grouped under each of your events.'}
+          </p>
+        </div>
+        {!loading && validGroups && (
+          <div className="reviews-summary">
+            <span>{validGroups.length} event{validGroups.length === 1 ? '' : 's'}</span>
+            <strong>{totalReviews} review{totalReviews === 1 ? '' : 's'}</strong>
+            <button type="button" onClick={retry}>Refresh</button>
+          </div>
+        )}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Reviews could not be loaded"
+          message={error}
+          onRetry={retry}
+        />
+      ) : loading ? (
+        <div className="review-groups" aria-label="Loading reviews" aria-busy="true">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div className="review-group review-group-skeleton skeleton-block" key={index} />
+          ))}
+        </div>
+      ) : validGroups.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">☆</span>
+          <h2>No reviews yet</h2>
+          <p>Reviews will appear here under the event they belong to.</p>
+        </div>
+      ) : (
+        <div className="review-groups">
+          {validGroups.map((group) => (
+            <section className="review-group" aria-labelledby={`reviews-event-${group.event_id}`} key={group.event_id}>
+              <header className="review-group-header">
+                <div>
+                  <div className="review-event-title-line">
+                    <h2 id={`reviews-event-${group.event_id}`}>{group.event_title}</h2>
+                    <span className={`review-event-status review-event-status-${group.event_status}`}>
+                      {group.event_status}
+                    </span>
+                  </div>
+                  {role === 'admin' && <p>Organized by {group.organizer_name}</p>}
+                </div>
+                <span>{group.reviews.length} review{group.reviews.length === 1 ? '' : 's'}</span>
+              </header>
+              <div className="review-list">
+                {group.reviews.map((review) => {
+                  const hasRoleReply = review.replies.some(
+                    (reply) => reply.replier_role === role,
+                  )
+                  return (
+                    <article className="review-card" key={review.id}>
+                      <div className="review-author-avatar" aria-hidden="true">
+                        {review.reviewer_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="review-card-content">
+                        <div className="review-card-heading">
+                          <div>
+                            <strong>{review.reviewer_name}</strong>
+                            <RatingStars rating={review.rating} />
+                          </div>
+                          <time dateTime={review.created_at}>{formatDateTime(review.created_at)}</time>
+                        </div>
+                        <p className="review-comment">{review.comment}</p>
+                        {review.updated_at !== review.created_at && (
+                          <small className="review-edited">Edited {formatDateTime(review.updated_at)}</small>
+                        )}
+                        {review.replies.length > 0 && (
+                          <div className="review-replies">
+                            {review.replies.map((reply) => (
+                              <div className={`review-reply review-reply-${reply.replier_role}`} key={reply.id}>
+                                <div>
+                                  <strong>{reply.replier_role === 'admin' ? 'Admin reply' : 'Organizer reply'}</strong>
+                                  <time dateTime={reply.created_at}>{formatDateTime(reply.created_at)}</time>
+                                </div>
+                                <p>{reply.body}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="review-card-actions">
+                          {hasRoleReply ? (
+                            <span className="read-status-label">You replied</span>
+                          ) : (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() => setReplyTarget({ event: group, review })}
+                            >
+                              <AppIcon type="reply" />
+                              Reply
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
+      {replyTarget && (
+        <ReplyModal
+          review={replyTarget.review}
+          eventTitle={replyTarget.event.event_title}
+          tokens={tokens}
+          onClose={() => setReplyTarget(null)}
+          onReplied={handleReplied}
+          onSessionExpired={onSessionExpired}
+          onTokensChanged={onTokensChanged}
+        />
+      )}
+    </section>
+  )
+}
+
+function validateOrganizedEventBookingGroups(payload) {
+  return (
+    Array.isArray(payload) &&
+    payload.every(
+      (group) =>
+        typeof group?.event_id === 'string' &&
+        typeof group.event_title === 'string' &&
+        ['draft', 'published', 'cancelled', 'completed'].includes(
+          group.event_status,
+        ) &&
+        typeof group.event_venue === 'string' &&
+        typeof group.event_datetime === 'string' &&
+        Number.isInteger(group.total_tickets) &&
+        Number.isInteger(group.tickets_available) &&
+        Array.isArray(group.bookings) &&
+        group.bookings.every(
+          (booking) =>
+            typeof booking?.id === 'string' &&
+            typeof booking.user_id === 'string' &&
+            typeof booking.attendee_name === 'string' &&
+            typeof booking.attendee_email === 'string' &&
+            Number.isInteger(booking.quantity) &&
+            booking.quantity > 0 &&
+            ['confirmed', 'cancelled'].includes(booking.status) &&
+            typeof booking.booked_at === 'string' &&
+            (booking.cancelled_at === null ||
+              typeof booking.cancelled_at === 'string'),
+        ),
+    )
+  )
+}
+
+function OrganizedEventBookingsPage({
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const {
+    data: bookingGroups,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({
+    tokens,
+    onSessionExpired,
+    onTokensChanged,
+    load: listOrganizedEventBookings,
+    resource: "your events' bookings",
+  })
+  const validGroups = bookingGroups &&
+    validateOrganizedEventBookingGroups(bookingGroups)
+    ? bookingGroups
+    : null
+  const totalBookings = validGroups?.reduce(
+    (total, group) => total + group.bookings.length,
+    0,
+  ) || 0
+
+  if (!loading && bookingGroups && !validGroups) {
+    return (
+      <section className="events-content" aria-labelledby="event-bookings-title">
+        <ResourceError
+          title="Event bookings could not be loaded"
+          message="The server returned an invalid event booking response."
+          onRetry={retry}
+        />
+      </section>
+    )
+  }
+
+  return (
+    <section
+      className="events-content managed-bookings-content"
+      aria-labelledby="event-bookings-title"
+    >
+      <div className="events-intro reviews-intro">
+        <div>
+          <p className="eyebrow">Attendee management</p>
+          <h1 id="event-bookings-title">My event&apos;s bookings</h1>
+          <p>See every reservation grouped under the event it belongs to.</p>
+        </div>
+        {!loading && validGroups && (
+          <div className="reviews-summary">
+            <span>{validGroups.length} event{validGroups.length === 1 ? '' : 's'}</span>
+            <strong>{totalBookings} booking{totalBookings === 1 ? '' : 's'}</strong>
+            <button type="button" onClick={retry}>Refresh</button>
+          </div>
+        )}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Event bookings could not be loaded"
+          message={error}
+          onRetry={retry}
+        />
+      ) : loading ? (
+        <div className="managed-booking-groups" aria-label="Loading event bookings" aria-busy="true">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div className="review-group review-group-skeleton skeleton-block" key={index} />
+          ))}
+        </div>
+      ) : validGroups.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No event bookings yet</h2>
+          <p>Bookings will appear here under the event they belong to.</p>
+        </div>
+      ) : (
+        <div className="managed-booking-groups">
+          {validGroups.map((group) => {
+            const confirmedBookings = group.bookings.filter(
+              (booking) => booking.status === 'confirmed',
+            )
+            const reservedTickets = confirmedBookings.reduce(
+              (total, booking) => total + booking.quantity,
+              0,
+            )
+
+            return (
+              <section
+                className="review-group managed-booking-group"
+                aria-labelledby={`bookings-event-${group.event_id}`}
+                key={group.event_id}
+              >
+                <header className="review-group-header managed-booking-group-header">
+                  <div>
+                    <div className="review-event-title-line">
+                      <h2 id={`bookings-event-${group.event_id}`}>{group.event_title}</h2>
+                      <span className={`review-event-status review-event-status-${group.event_status}`}>
+                        {group.event_status}
+                      </span>
+                    </div>
+                    <p>{formatDateTime(group.event_datetime)} · {group.event_venue}</p>
+                  </div>
+                  <div className="managed-booking-group-summary">
+                    <strong>{group.bookings.length} booking{group.bookings.length === 1 ? '' : 's'}</strong>
+                    <span>{reservedTickets} active ticket{reservedTickets === 1 ? '' : 's'}</span>
+                  </div>
+                </header>
+
+                <div className="managed-booking-list">
+                  {group.bookings.map((booking) => (
+                    <article className="managed-booking-card" key={booking.id}>
+                      <div className="managed-booking-avatar" aria-hidden="true">
+                        {booking.attendee_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="managed-booking-attendee">
+                        <div>
+                          <strong>{booking.attendee_name}</strong>
+                          <span className={`status-badge status-${booking.status}`}>
+                            {booking.status}
+                          </span>
+                        </div>
+                        <a href={`mailto:${booking.attendee_email}`}>{booking.attendee_email}</a>
+                        <small title={booking.id}>Booking #{shortId(booking.id)}</small>
+                      </div>
+                      <div className="managed-booking-time">
+                        <span>Booked</span>
+                        <strong>{formatDateTime(booking.booked_at)}</strong>
+                        {booking.cancelled_at && (
+                          <small>Cancelled {formatDateTime(booking.cancelled_at)}</small>
+                        )}
+                      </div>
+                      <div className="managed-booking-quantity">
+                        <span>Tickets</span>
+                        <strong>{booking.quantity}</strong>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ProfileModal({
+  tokens,
+  profile,
+  role,
+  onClose,
+  onUpdated,
+  onPasswordChanged,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [form, setForm] = useState(() => ({
+    name: profile?.name || '',
+    email: profile?.email || '',
+    role,
+  }))
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: '',
+    new_password: '',
+    confirm_password: '',
+  })
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState({})
+  const [passwordFormError, setPasswordFormError] = useState(null)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const isAdmin = role === 'admin'
+
+  function updateField(event) {
+    const { name, value } = event.target
+    setForm((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: undefined }))
+    setFormError(null)
+  }
+
+  function updatePasswordField(event) {
+    const { name, value } = event.target
+    setPasswordForm((current) => ({ ...current, [name]: value }))
+    setPasswordFieldErrors((current) => ({
+      ...current,
+      [name]: undefined,
+    }))
+    setPasswordFormError(null)
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const nextName = normalizeName(form.name)
+    const nextEmail = normalizeEmail(form.email)
+    const payload = {}
+    const errors = {}
+
+    if (nextName) {
+      if (characterLength(nextName) < 2) {
+        errors.name = 'Name must contain at least 2 characters.'
+      } else if (characterLength(nextName) > 120) {
+        errors.name = 'Name must contain at most 120 characters.'
+      } else if (nextName !== profile?.name) {
+        payload.name = nextName
+      }
+    }
+
+    if (nextEmail) {
+      if (characterLength(nextEmail) > 320) {
+        errors.email = 'Email must contain at most 320 characters.'
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(nextEmail)) {
+        errors.email = 'Enter a valid email address.'
+      } else if (nextEmail !== profile?.email) {
+        payload.email = nextEmail
+      }
+    }
+
+    if (!isAdmin && form.role !== role) payload.role = form.role
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+    if (Object.keys(payload).length === 0) {
+      setFormError('Make a change before saving your profile.')
+      return
+    }
+
+    setSubmitting(true)
+    setFieldErrors({})
+    setFormError(null)
+    try {
+      const result = await updateOwnProfile({ tokens, profile: payload })
+      if (result.tokens.access_token !== tokens.access_token) {
+        onTokensChanged(result.tokens)
+      }
+      onUpdated(result.data)
+      onClose()
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['name', 'email', 'role'],
+        'We could not update your profile. Please try again.',
+      )
+      setFieldErrors(apiErrors.fieldErrors)
+      setFormError(apiErrors.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handlePasswordSubmit(event) {
+    event.preventDefault()
+    const errors = {}
+    const newPasswordLength = characterLength(passwordForm.new_password)
+    const passwordChecks = getPasswordChecks(passwordForm.new_password)
+
+    if (!passwordForm.current_password) {
+      errors.current_password = 'Enter your current password.'
+    } else if (characterLength(passwordForm.current_password) > 128) {
+      errors.current_password = 'Password must contain at most 128 characters.'
+    }
+    if (newPasswordLength < 8) {
+      errors.new_password = 'New password must contain at least 8 characters.'
+    } else if (newPasswordLength > 128) {
+      errors.new_password = 'New password must contain at most 128 characters.'
+    } else if (passwordChecks.some((check) => !check.met)) {
+      const missingRequirements = passwordChecks
+        .filter((check) => !check.met && check.key !== 'length')
+        .map((check) => check.label.toLowerCase().replace(/^one /, ''))
+      errors.new_password = `Password must contain at least one ${missingRequirements.join(', ')}.`
+    } else if (passwordForm.new_password === passwordForm.current_password) {
+      errors.new_password = 'The new password must differ from the current password.'
+    }
+    if (passwordForm.confirm_password !== passwordForm.new_password) {
+      errors.confirm_password = 'Passwords do not match.'
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setPasswordFieldErrors(errors)
+      setPasswordFormError('Please correct the highlighted fields and try again.')
+      return
+    }
+
+    setChangingPassword(true)
+    setPasswordFieldErrors({})
+    setPasswordFormError(null)
+    try {
+      await changeOwnPassword({
+        tokens,
+        currentPassword: passwordForm.current_password,
+        newPassword: passwordForm.new_password,
+      })
+      onPasswordChanged()
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired(error.message)
+        return
+      }
+      const apiErrors = getFormApiErrors(
+        error,
+        ['current_password', 'new_password'],
+        'We could not change your password. Please try again.',
+      )
+      setPasswordFieldErrors(apiErrors.fieldErrors)
+      setPasswordFormError(apiErrors.message)
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
+  return (
+    <Modal titleId="profile-title" onClose={onClose} className="form-modal profile-modal">
+      <div className="modal-heading">
+        <p className="eyebrow">Account settings</p>
+        <h1 id="profile-title">Your profile</h1>
+        <p>Leave name or email blank to keep the existing value.</p>
+      </div>
+      <Alert>{formError}</Alert>
+      <form className="profile-form" onSubmit={handleSubmit} noValidate>
+        <div className="form-field">
+          <label htmlFor="profile-name">Name</label>
+          <input id="profile-name" name="name" value={form.name} onChange={updateField} maxLength={120} autoComplete="name" className={fieldErrors.name ? 'input-error' : ''} placeholder="Keep current name" />
+          <FieldError id="profile-name-error">{fieldErrors.name}</FieldError>
+        </div>
+        <div className="form-field">
+          <label htmlFor="profile-email">Email address</label>
+          <input id="profile-email" name="email" type="email" value={form.email} onChange={updateField} maxLength={320} autoComplete="email" className={fieldErrors.email ? 'input-error' : ''} placeholder="Keep current email" />
+          <FieldError id="profile-email-error">{fieldErrors.email}</FieldError>
+        </div>
+        {isAdmin ? (
+          <div className="profile-role-locked">
+            <span>Your role</span>
+            <strong>Admin</strong>
+            <p>Admin accounts cannot change their own role.</p>
+          </div>
+        ) : (
+          <div className="form-field">
+            <label htmlFor="profile-role">Role</label>
+            <select id="profile-role" name="role" value={form.role} onChange={updateField}>
+              {REGISTERABLE_ROLES.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <FieldError id="profile-role-error">{fieldErrors.role}</FieldError>
+          </div>
+        )}
+        <div className="modal-actions profile-form-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            {submitting && <span className="spinner" aria-hidden="true" />}
+            {submitting ? 'Saving…' : 'Save profile'}
+          </button>
+        </div>
+      </form>
+      <div className="profile-section-divider" />
+      <div className="profile-password-heading">
+        <h2>Change password</h2>
+        <p>You will be asked to log in again after changing your password.</p>
+      </div>
+      <Alert>{passwordFormError}</Alert>
+      <form className="profile-form profile-password-form" onSubmit={handlePasswordSubmit} noValidate>
+        <PasswordField
+          id="profile-current-password"
+          name="current_password"
+          label="Current password"
+          value={passwordForm.current_password}
+          onChange={updatePasswordField}
+          error={passwordFieldErrors.current_password}
+          autoComplete="current-password"
+        />
+        <PasswordField
+          id="profile-new-password"
+          name="new_password"
+          label="New password"
+          value={passwordForm.new_password}
+          onChange={updatePasswordField}
+          error={passwordFieldErrors.new_password}
+          showStrength
+          autoComplete="new-password"
+        />
+        <PasswordField
+          id="profile-confirm-password"
+          name="confirm_password"
+          label="Confirm new password"
+          value={passwordForm.confirm_password}
+          onChange={updatePasswordField}
+          error={passwordFieldErrors.confirm_password}
+          autoComplete="new-password"
+          placeholder="Enter the new password again"
+        />
+        <div className="modal-actions profile-form-actions">
+          <button className="primary-button" type="submit" disabled={changingPassword || submitting}>
+            {changingPassword && <span className="spinner" aria-hidden="true" />}
+            {changingPassword ? 'Changing password…' : 'Change password'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function UserBookingsModal({
+  user,
+  tokens,
+  onClose,
+  onSessionExpired,
+  onTokensChanged,
+}) {
+  const [page, setPage] = useState(1)
+  const [bookingPage, setBookingPage] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [bookingToCancel, setBookingToCancel] = useState(null)
+  const [selectedBooking, setSelectedBooking] = useState(null)
+  const [cancellingBookingId, setCancellingBookingId] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadUserBookings() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listUserBookings({
+          tokens: tokensRef.current,
+          userId: user.id,
+          page,
+        })
+        if (!validateBookingPage(result.data)) {
+          throw new Error('Invalid paginated booking response.')
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setBookingPage(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, `${user.name}'s bookings`))
+        setLoading(false)
+      }
+    }
+
+    loadUserBookings()
+    return () => { cancelled = true }
+  }, [onSessionExpired, onTokensChanged, page, retryCount, user.id, user.name])
+
+  function closeWhenIdle() {
+    if (!bookingToCancel && !cancellingBookingId) onClose()
+  }
+
+  function changePage(nextPage) {
+    if (
+      loading ||
+      !bookingPage ||
+      nextPage < 1 ||
+      nextPage > bookingPage.total_pages
+    ) return
+
+    setPage(nextPage)
+    setActionError(null)
+  }
+
+  async function handleCancelBooking() {
+    const booking = bookingToCancel
+    if (!booking || !canCancelListedBooking(booking) || cancellingBookingId) return
+
+    setCancellingBookingId(booking.id)
+    setActionError(null)
+    try {
+      const result = await cancelBooking({
+        tokens: tokensRef.current,
+        bookingId: booking.id,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      setBookingPage((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === booking.id ? result.data : item,
+              ),
+            }
+          : current,
+      )
+      setBookingToCancel(null)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setBookingToCancel(null)
+      setActionError(
+        requestError instanceof ApiError && typeof requestError.payload?.detail === 'string'
+          ? requestError.payload.detail
+          : 'We could not cancel this booking. Please try again.',
+      )
+    } finally {
+      setCancellingBookingId(null)
+    }
+  }
+
+  if (selectedBooking) {
+    return (
+      <BookingDetailsModal
+        booking={selectedBooking}
+        bookingOwnerName={user.name}
+        onClose={() => setSelectedBooking(null)}
+      />
+    )
+  }
+
+  return (
+    <>
+      <Modal
+        titleId="user-bookings-title"
+        onClose={closeWhenIdle}
+        className="form-modal admin-bookings-modal"
+      >
+        <div className="modal-heading admin-bookings-heading">
+          <p className="eyebrow">Booking management</p>
+          <h1 id="user-bookings-title">{user.name}&apos;s bookings</h1>
+          <p>{user.email} · {user.role} · {user.is_active ? 'Active' : 'Inactive'}</p>
+        </div>
+        <Alert>{actionError}</Alert>
+
+        {error ? (
+          <ResourceError
+            title="Bookings could not be loaded"
+            message={error}
+            onRetry={() => setRetryCount((count) => count + 1)}
+          />
+        ) : loading ? (
+          <div className="admin-booking-list" aria-label="Loading user bookings" aria-busy="true">
+            {Array.from({ length: 3 }, (_, index) => (
+              <div className="admin-user-booking-card skeleton-block" key={index} />
+            ))}
+          </div>
+        ) : bookingPage.items.length === 0 ? (
+          <div className="admin-bookings-empty">
+            <span aria-hidden="true">◇</span>
+            <h2>No bookings</h2>
+            <p>This user has not booked any events.</p>
+          </div>
+        ) : (
+          <>
+            <div className="admin-bookings-summary">
+              <span>{bookingPage.total_items} total booking{bookingPage.total_items === 1 ? '' : 's'}</span>
+              <small>Eligible upcoming bookings can be cancelled. The user will be notified.</small>
+            </div>
+            <div className="admin-booking-list">
+              {bookingPage.items.map((booking) => (
+                <article className="admin-user-booking-card" key={booking.id}>
+                  <button
+                    className="admin-booking-details-trigger"
+                    type="button"
+                    onClick={() => setSelectedBooking(booking)}
+                    aria-label={`View booking details for ${booking.event_title}`}
+                  >
+                    <div className="admin-booking-main">
+                      <div className="booking-heading">
+                        <h2>{booking.event_title}</h2>
+                        <span className={`status-badge status-${booking.status}`}>
+                          {booking.status === 'confirmed' ? 'Confirmed' : 'Cancelled'}
+                        </span>
+                        {booking.event_status !== 'published' && (
+                          <span className={`event-state-badge event-state-${booking.event_status}`}>
+                            Event {booking.event_status}
+                          </span>
+                        )}
+                      </div>
+                      <p>{formatDateTime(booking.event_datetime)} · {booking.event_venue}</p>
+                      <p>Organized by {booking.event_organizer_name}</p>
+                      <small>Booked {formatDateTime(booking.booked_at)} · View details →</small>
+                      {booking.cancelled_at && (
+                        <small>Booking cancelled {formatDateTime(booking.cancelled_at)}</small>
+                      )}
+                    </div>
+                    <div className="admin-booking-ticket-count">
+                      <span>Tickets</span>
+                      <strong>{booking.quantity}</strong>
+                    </div>
+                  </button>
+                  {canCancelListedBooking(booking) ? (
+                    <button
+                      className="destructive-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setBookingToCancel(booking)
+                      }}
+                      disabled={Boolean(cancellingBookingId)}
+                    >
+                      Cancel booking
+                    </button>
+                  ) : booking.status === 'cancelled' ? (
+                    <span className="read-status-label">Already cancelled</span>
+                  ) : (
+                    <span className="read-status-label">Cancellation unavailable</span>
+                  )}
+                </article>
+              ))}
+            </div>
+            <Pagination
+              pageData={bookingPage}
+              loading={loading}
+              onChange={changePage}
+              label={`${user.name}'s booking`}
+            />
+          </>
+        )}
+
+        <div className="modal-actions admin-bookings-footer">
+          <button className="secondary-button" type="button" onClick={closeWhenIdle}>
+            Close
+          </button>
+        </div>
+      </Modal>
+
+      {bookingToCancel && (
+        <ConfirmationModal
+          title={`Cancel ${user.name}'s booking?`}
+          description={`This will cancel ${bookingToCancel.quantity} ticket${bookingToCancel.quantity === 1 ? '' : 's'} for ${bookingToCancel.event_title}. The tickets will be returned and ${user.name} will be notified.`}
+          confirmLabel="Cancel booking"
+          cancelLabel="Keep booking"
+          onClose={() => setBookingToCancel(null)}
+          onConfirm={handleCancelBooking}
+          submitting={cancellingBookingId === bookingToCancel.id}
+        />
+      )}
+    </>
+  )
+}
+
+function UsersPage({ tokens, onSessionExpired, onTokensChanged }) {
+  const {
+    data: users,
+    setData: setUsers,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({
+    tokens,
+    onSessionExpired,
+    onTokensChanged,
+    load: listUsers,
+    resource: 'users',
+  })
+  const [actionLoading, setActionLoading] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const [userToDeactivate, setUserToDeactivate] = useState(null)
+  const [selectedUser, setSelectedUser] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  function applyUserUpdate(updatedUser) {
+    setUsers((current) =>
+      current
+        ? current.map((user) =>
+            user.id === updatedUser.id ? updatedUser : user,
+          )
+        : current,
+    )
+  }
+
+  async function handleRoleChange(user, nextRole) {
+    if (actionLoading || user.role === nextRole || user.role === 'admin' || !user.is_active) {
+      return
+    }
+
+    setActionLoading(`role-${user.id}`)
+    setActionError(null)
+    try {
+      const result = await changeUserRole({
+        tokens: tokensRef.current,
+        userId: user.id,
+        role: nextRole,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      applyUserUpdate(result.data)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(getResourceErrorMessage(requestError, 'the user role'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  function requestDeactivation(user) {
+    if (actionLoading || user.role === 'admin' || !user.is_active) return
+
+    setActionError(null)
+    setUserToDeactivate(user)
+  }
+
+  async function handleDeactivate() {
+    const user = userToDeactivate
+    if (!user || actionLoading || user.role === 'admin' || !user.is_active) return
+
+    setActionLoading(`status-${user.id}`)
+    setActionError(null)
+    try {
+      const result = await deactivateUser({
+        tokens: tokensRef.current,
+        userId: user.id,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      applyUserUpdate(result.data)
+      setUserToDeactivate(null)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(getResourceErrorMessage(requestError, 'the account status'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  return (
+    <section className="events-content" aria-labelledby="users-title">
+      <div className="events-intro">
+        <div>
+          <p className="eyebrow">Administration</p>
+          <h1 id="users-title">Users</h1>
+          <p>Review registered accounts and their access roles.</p>
+        </div>
+        {users && <p className="events-count">{users.length} users</p>}
+      </div>
+      <Alert>{actionError}</Alert>
+
+      {error ? (
+        <ResourceError title="Users could not be loaded" message={error} onRetry={retry} />
+      ) : loading ? (
+        <div
+          className="data-panel skeleton-block data-loading"
+          aria-label="Loading users"
+          aria-busy="true"
+        />
+      ) : users.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No users found</h2>
+        </div>
+      ) : (
+        <div className="data-panel table-scroll">
+          <table className="data-table">
+            <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td>
+                    <button
+                      className="user-bookings-button"
+                      type="button"
+                      onClick={() => {
+                        setActionError(null)
+                        setSelectedUser(user)
+                      }}
+                      aria-label={`View ${user.name}'s bookings`}
+                    >
+                      <strong>{user.name}</strong>
+                      <span>{user.email}</span>
+                      <small>View bookings →</small>
+                    </button>
+                  </td>
+                  <td>
+                    {user.role === 'admin' ? (
+                      <span className="role-badge" title="Admin roles cannot be changed">
+                        admin
+                      </span>
+                    ) : (
+                      <select
+                        className="user-role-select"
+                        value={user.role}
+                        onChange={(event) => handleRoleChange(user, event.target.value)}
+                        disabled={!user.is_active || Boolean(actionLoading)}
+                        aria-label={`Change ${user.name}'s role`}
+                      >
+                        {REGISTERABLE_ROLES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
+                  <td>
+                    {user.role !== 'admin' && user.is_active ? (
+                      <button
+                        className="deactivate-user-button"
+                        type="button"
+                        onClick={() => requestDeactivation(user)}
+                        disabled={Boolean(actionLoading)}
+                      >
+                        {actionLoading === `status-${user.id}`
+                          ? 'Deactivating…'
+                          : 'Deactivate'}
+                      </button>
+                    ) : (
+                      <span className={`account-status ${user.is_active ? 'account-active' : ''}`}>
+                        {user.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    )}
+                  </td>
+                  <td>{formatDateTime(user.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {userToDeactivate && (
+        <ConfirmationModal
+          title={`Deactivate ${userToDeactivate.name}?`}
+          description="This user will immediately lose access, and their active sessions will be revoked. The current backend does not provide a way to reactivate the account."
+          confirmLabel="Deactivate user"
+          cancelLabel="Keep active"
+          onClose={() => setUserToDeactivate(null)}
+          onConfirm={handleDeactivate}
+          submitting={actionLoading === `status-${userToDeactivate.id}`}
+        />
+      )}
+      {selectedUser && (
+        <UserBookingsModal
+          user={selectedUser}
+          tokens={tokens}
+          onClose={() => setSelectedUser(null)}
+          onSessionExpired={onSessionExpired}
+          onTokensChanged={onTokensChanged}
+        />
+      )}
+    </section>
+  )
+}
+
+function formatAuditAction(action) {
+  if (typeof action !== 'string') return 'Activity recorded'
+  const [entity, verb] = action.split('.')
+  const entityLabel = `${entity?.charAt(0).toUpperCase()}${entity?.slice(1)}`
+  return `${entityLabel} ${verb?.replaceAll('_', ' ') || ''}`.trim()
+}
+
+function LogsPage(props) {
+  const {
+    data: logs,
+    loading,
+    error,
+    retry,
+  } = useProtectedList({ ...props, load: listAuditLogs, resource: 'audit logs' })
+
+  return (
+    <section className="events-content" aria-labelledby="logs-title">
+      <div className="events-intro">
+        <div>
+          <p className="eyebrow">Administration</p>
+          <h1 id="logs-title">Audit logs</h1>
+          <p>See the latest important activity across EventDesk.</p>
+        </div>
+        {logs && <p className="events-count">{logs.length} entries</p>}
+      </div>
+
+      {error ? (
+        <ResourceError
+          title="Audit logs could not be loaded"
+          message={error}
+          onRetry={retry}
+        />
+      ) : loading ? (
+        <div
+          className="data-panel skeleton-block data-loading"
+          aria-label="Loading audit logs"
+          aria-busy="true"
+        />
+      ) : logs.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">◇</span>
+          <h2>No audit activity yet</h2>
+        </div>
+      ) : (
+        <div className="log-list">
+          {logs.map((log) => (
+            <article className="log-item" key={log.id}>
+              <span className="log-icon"><AppIcon type="logs" /></span>
+              <div>
+                <h2>{formatAuditAction(log.action)}</h2>
+                <p>
+                  <span>{log.entity_type}</span>{' '}
+                  <code title={log.entity_id}>{shortId(log.entity_id)}</code>
+                  {' · '}Actor{' '}
+                  <code title={log.actor_id || ''}>
+                    {log.actor_id ? shortId(log.actor_id) : 'System'}
+                  </code>
+                </p>
+              </div>
+              <time dateTime={log.created_at}>{formatDateTime(log.created_at)}</time>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function formatNotificationType(type) {
+  const labels = {
+    booking_confirmed: 'Booking confirmed',
+    booking_cancelled: 'Booking cancelled',
+    event_cancelled: 'Event cancelled',
+    event_reminder: 'Event reminder',
+    event_reviewed: 'New review',
+    review_replied: 'Review reply',
+  }
+  return labels[type] || 'Notification'
+}
+
+function validateNotificationList(payload) {
+  return (
+    Array.isArray(payload) &&
+    payload.every(
+      (item) =>
+        item &&
+        typeof item.id === 'string' &&
+        typeof item.message === 'string' &&
+        typeof item.type === 'string',
+    )
+  )
+}
+
+const NOTIFICATION_CONTEXTS = [
+  { key: 'all', label: 'All' },
+  { key: 'booking', label: 'Bookings' },
+  { key: 'review', label: 'Reviews' },
+]
+
+function matchesNotificationContext(notification, context) {
+  if (context === 'booking') return Boolean(notification.related_booking_id)
+  if (context === 'review') return Boolean(notification.related_review_id)
+  return true
+}
+
+function NotificationsPage({
+  tokens,
+  onSessionExpired,
+  onTokensChanged,
+  subscribeToNotifications,
+  onNotificationRead,
+  onAllNotificationsRead,
+}) {
+  const [context, setContext] = useState('all')
+  const [notifications, setNotifications] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [actionLoading, setActionLoading] = useState(null)
+  const [actionNotice, setActionNotice] = useState('')
+  const [actionError, setActionError] = useState(null)
+  const tokensRef = useRef(tokens)
+
+  useEffect(() => {
+    tokensRef.current = tokens
+  }, [tokens])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadNotifications() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listNotifications({
+          tokens: tokensRef.current,
+          context,
+        })
+        if (!validateNotificationList(result.data)) {
+          throw new Error('Invalid notifications response.')
+        }
+        if (!cancelled) {
+          if (result.tokens.access_token !== tokensRef.current.access_token) {
+            tokensRef.current = result.tokens
+            onTokensChanged(result.tokens)
+          }
+          setNotifications(result.data)
+          setLoading(false)
+        }
+      } catch (requestError) {
+        if (cancelled) return
+        if (requestError instanceof SessionExpiredError) {
+          onSessionExpired(requestError.message)
+          return
+        }
+        setError(getResourceErrorMessage(requestError, 'notifications'))
+        setLoading(false)
+      }
+    }
+
+    loadNotifications()
+    return () => {
+      cancelled = true
+    }
+  }, [context, onSessionExpired, onTokensChanged, retryCount])
+
+  useEffect(() => {
+    return subscribeToNotifications((incomingNotification) => {
+      if (!matchesNotificationContext(incomingNotification, context)) return
+
+      setNotifications((current) => {
+        if (!current) return current
+        const existingIndex = current.findIndex(
+          (item) => item.id === incomingNotification.id,
+        )
+        if (existingIndex === -1) return [incomingNotification, ...current]
+
+        const next = [...current]
+        next[existingIndex] = incomingNotification
+        return next
+      })
+    })
+  }, [context, subscribeToNotifications])
+
+  useEffect(() => {
+    if (!actionNotice) return undefined
+    const timer = window.setTimeout(() => setActionNotice(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [actionNotice])
+
+  async function handleMarkRead(notificationId) {
+    if (actionLoading) return
+    const currentNotification = notifications?.find(
+      (item) => item.id === notificationId,
+    )
+    if (!currentNotification || currentNotification.read_at) return
+
+    setActionLoading(notificationId)
+    setActionError(null)
+
+    try {
+      const result = await markNotificationRead({
+        tokens: tokensRef.current,
+        notificationId,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      setNotifications((current) =>
+        current
+          ? current.map((item) =>
+              item.id === notificationId ? result.data : item,
+            )
+          : current,
+      )
+      onNotificationRead(result.data)
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(
+        getResourceErrorMessage(requestError, 'the notification update'),
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  async function handleMarkAllRead() {
+    if (actionLoading || !notifications || unreadCount === 0) return
+    setActionLoading('all')
+    setActionError(null)
+
+    try {
+      const result = await markAllNotificationsRead({
+        tokens: tokensRef.current,
+      })
+      if (result.tokens.access_token !== tokensRef.current.access_token) {
+        tokensRef.current = result.tokens
+        onTokensChanged(result.tokens)
+      }
+      const readAt = new Date().toISOString()
+      setNotifications((current) =>
+        current
+          ? current.map((item) => ({
+              ...item,
+              read_at: item.read_at || readAt,
+            }))
+          : current,
+      )
+      onAllNotificationsRead()
+      setActionNotice(
+        result.data.updated_count > 0
+          ? `Marked ${result.data.updated_count} notification${result.data.updated_count === 1 ? '' : 's'} as read.`
+          : 'All notifications are read.',
+      )
+    } catch (requestError) {
+      if (requestError instanceof SessionExpiredError) {
+        onSessionExpired(requestError.message)
+        return
+      }
+      setActionError(
+        getResourceErrorMessage(requestError, 'the notification update'),
+      )
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const unreadCount = notifications
+    ? notifications.filter((item) => !item.read_at).length
+    : 0
+
+  return (
+    <section className="events-content notifications-content" aria-labelledby="notifications-title">
+      <div className="events-intro notifications-intro">
+        <div>
+          <p className="eyebrow">Updates &amp; Alerts</p>
+          <h1 id="notifications-title">Notifications</h1>
+          <p>Stay informed about your bookings, reviews, and event changes.</p>
+        </div>
+        <div className="notifications-header-actions">
+          {actionNotice && (
+            <span className="action-notice" role="status">
+              ✓ {actionNotice}
+            </span>
+          )}
+          <button
+            className="secondary-button mark-all-read-button"
+            type="button"
+            onClick={handleMarkAllRead}
+            disabled={loading || unreadCount === 0 || actionLoading === 'all'}
+          >
+            {actionLoading === 'all' ? 'Marking all...' : 'Mark all as read'}
+          </button>
+        </div>
+      </div>
+
+      <div className="notification-context-tabs" role="tablist" aria-label="Notification categories">
+        {NOTIFICATION_CONTEXTS.map((item) => (
+          <button
+            key={item.key}
+            role="tab"
+            aria-selected={context === item.key}
+            className={`context-tab ${context === item.key ? 'context-tab-active' : ''}`}
+            onClick={() => setContext(item.key)}
+            type="button"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      <Alert>{actionError}</Alert>
+
+      {error ? (
+        <ResourceError
+          title="Notifications could not be loaded"
+          message={error}
+          onRetry={() => setRetryCount((count) => count + 1)}
+        />
+      ) : loading ? (
+        <div className="notification-list" aria-label="Loading notifications" aria-busy="true">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div
+              className="notification-card notification-card-skeleton skeleton-block"
+              key={index}
+            />
+          ))}
+        </div>
+      ) : notifications.length === 0 ? (
+        <div className="events-state">
+          <span className="state-icon state-icon-empty" aria-hidden="true">🔔</span>
+          <h2>No {context !== 'all' ? `${context} ` : ''}notifications</h2>
+          <p>
+            {context === 'all'
+              ? 'When events, bookings, or reviews have updates, they will appear here in real time.'
+              : `You have no ${context}-related notifications right now.`}
+          </p>
+        </div>
+      ) : (
+        <div className="notification-list">
+          {notifications.map((notification) => {
+            const isUnread = !notification.read_at
+            const isItemActionLoading = actionLoading === notification.id
+            const isOrganizerCancellation = (
+              notification.type === 'event_cancelled' &&
+              !notification.related_booking_id &&
+              !notification.related_review_id
+            )
+
+            return (
+              <article
+                className={`notification-card ${isUnread ? 'notification-unread' : ''}`}
+                key={notification.id}
+              >
+                <div className={`notification-icon-wrapper notification-type-${notification.type}`}>
+                  <NotificationIcon type={notification.type} />
+                </div>
+                <div className="notification-main">
+                  <div className="notification-top">
+                    <div className="notification-type-wrap">
+                      <span className={`notification-badge-pill pill-${notification.type}`}>
+                        {isOrganizerCancellation
+                          ? 'Cancelled by admin'
+                          : formatNotificationType(notification.type)}
+                      </span>
+                      {isUnread && <span className="unread-dot" title="Unread" />}
+                    </div>
+                    <time dateTime={notification.created_at} className="notification-time">
+                      {formatDateTime(notification.created_at)}
+                    </time>
+                  </div>
+                  <p className="notification-message">{notification.message}</p>
+                  <div className="notification-meta">
+                    {notification.related_booking_id && (
+                      <small title={notification.related_booking_id}>
+                        Booking #{shortId(notification.related_booking_id)}
+                      </small>
+                    )}
+                    {notification.related_review_id && (
+                      <small title={notification.related_review_id}>
+                        Review #{shortId(notification.related_review_id)}
+                      </small>
+                    )}
+                    {isOrganizerCancellation && <small>Your event</small>}
+                  </div>
+                </div>
+                <div className="notification-actions">
+                  {isUnread ? (
+                    <button
+                      className="mark-read-button"
+                      type="button"
+                      onClick={() => handleMarkRead(notification.id)}
+                      disabled={isItemActionLoading}
+                      title="Mark as read"
+                    >
+                      {isItemActionLoading ? 'Saving...' : 'Mark as read'}
+                    </button>
+                  ) : (
+                    <span className="read-status-label">Read</span>
+                  )}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -1027,18 +5112,43 @@ function AuthVisual({ view }) {
   )
 }
 
+const APP_PAGES = [
+  'events',
+  'bookings',
+  'event-bookings',
+  'reviews',
+  'notifications',
+  'users',
+  'logs',
+]
+
+function getInitialAppPage() {
+  const page = window.location.pathname.slice(1)
+  return APP_PAGES.includes(page) ? page : 'events'
+}
+
 function getInitialView() {
-  return ['/login', '/events'].includes(window.location.pathname)
-    ? 'login'
-    : 'signup'
+  return window.location.pathname === '/signup' ? 'signup' : 'login'
 }
 
 function App() {
   const [view, setView] = useState(getInitialView)
+  const [appPage, setAppPage] = useState(getInitialAppPage)
   const [loginEmail, setLoginEmail] = useState('')
   const [notice, setNotice] = useState('')
   const [noticeType, setNoticeType] = useState('success')
   const [loggingOut, setLoggingOut] = useState(false)
+  const [createEventOpen, setCreateEventOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [eventReloadVersion, setEventReloadVersion] = useState(0)
+  const [appNotice, setAppNotice] = useState('')
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0)
+  const [liveToast, setLiveToast] = useState(null)
+  const unreadNotificationIdsRef = useRef(new Set())
+  const seenNotificationIdsRef = useRef(new Set())
+  const notificationBootstrapRef = useRef(true)
+  const notificationListenersRef = useRef(new Set())
   const [session, setSession] = useState(() => {
     const tokens = getStoredTokens()
 
@@ -1053,6 +5163,7 @@ function App() {
   useEffect(() => {
     function handlePopState() {
       setView(getInitialView())
+      setAppPage(getInitialAppPage())
       setNotice('')
       setNoticeType('success')
     }
@@ -1106,19 +5217,102 @@ function App() {
     setNotice(`Account created for ${user.email}. Log in to continue.`)
   }
 
-  function handleAuthenticated(tokens) {
+  function handleAuthenticated(tokens, userHint = {}) {
+    unreadNotificationIdsRef.current.clear()
+    seenNotificationIdsRef.current.clear()
+    notificationBootstrapRef.current = true
+    setUnreadNotificationsCount(0)
+    setLiveToast(null)
+    setCurrentUser(userHint)
     setSession({ status: 'authenticated', tokens })
+    setAppPage('events')
     setNotice('')
     window.history.replaceState({}, '', '/events')
   }
 
+  const handleTokensChanged = useCallback((tokens) => {
+    const refreshedRole = getAccessTokenClaims(tokens.access_token)?.role
+    if (typeof refreshedRole === 'string') {
+      setCurrentUser((current) => ({ ...current, role: refreshedRole }))
+    }
+    setSession({ status: 'authenticated', tokens })
+  }, [])
+
+  const handleAppNavigate = useCallback((nextPage, event) => {
+    event?.preventDefault()
+    if (!APP_PAGES.includes(nextPage)) return
+    window.history.pushState({}, '', `/${nextPage}`)
+    setAppPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  const syncUnreadNotifications = useCallback((notifications) => {
+    const unreadIds = new Set(
+      notifications.filter((notification) => !notification.read_at).map(
+        (notification) => notification.id,
+      ),
+    )
+    seenNotificationIdsRef.current = new Set(
+      notifications.map((notification) => notification.id),
+    )
+    unreadNotificationIdsRef.current = unreadIds
+    setUnreadNotificationsCount(unreadIds.size)
+  }, [])
+
+  const handleNotificationRead = useCallback((notification) => {
+    if (!notification.read_at) return
+    unreadNotificationIdsRef.current.delete(notification.id)
+    setUnreadNotificationsCount(unreadNotificationIdsRef.current.size)
+  }, [])
+
+  const handleAllNotificationsRead = useCallback(() => {
+    unreadNotificationIdsRef.current.clear()
+    setUnreadNotificationsCount(0)
+  }, [])
+
+  const subscribeToNotifications = useCallback((listener) => {
+    notificationListenersRef.current.add(listener)
+    return () => notificationListenersRef.current.delete(listener)
+  }, [])
+
+  useEffect(() => {
+    if (!appNotice) return undefined
+    const timer = window.setTimeout(() => setAppNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [appNotice])
+
   const handleSessionExpired = useCallback((message) => {
     clearTokens()
+    unreadNotificationIdsRef.current.clear()
+    seenNotificationIdsRef.current.clear()
+    notificationBootstrapRef.current = true
+    setUnreadNotificationsCount(0)
+    setLiveToast(null)
     setSession({ status: 'anonymous', tokens: null })
     setLoggingOut(false)
+    setCreateEventOpen(false)
+    setProfileOpen(false)
+    setCurrentUser(null)
     setView('login')
     setNoticeType('error')
     setNotice(message || 'Your session has expired. Please log in again.')
+    window.history.replaceState({}, '', '/login')
+  }, [])
+
+  const handlePasswordChanged = useCallback(() => {
+    clearTokens()
+    unreadNotificationIdsRef.current.clear()
+    seenNotificationIdsRef.current.clear()
+    notificationBootstrapRef.current = true
+    setUnreadNotificationsCount(0)
+    setLiveToast(null)
+    setSession({ status: 'anonymous', tokens: null })
+    setCreateEventOpen(false)
+    setProfileOpen(false)
+    setCurrentUser(null)
+    setView('login')
+    setNoticeType('success')
+    setNotice('Your password was changed. Log in again with your new password.')
     window.history.replaceState({}, '', '/login')
   }, [])
 
@@ -1132,8 +5326,16 @@ function App() {
       // invalid or the API is temporarily unreachable.
     } finally {
       clearTokens()
+      unreadNotificationIdsRef.current.clear()
+      seenNotificationIdsRef.current.clear()
+      notificationBootstrapRef.current = true
+      setUnreadNotificationsCount(0)
+      setLiveToast(null)
       setSession({ status: 'anonymous', tokens: null })
       setLoggingOut(false)
+      setCreateEventOpen(false)
+      setProfileOpen(false)
+      setCurrentUser(null)
       setView('login')
       window.history.replaceState({}, '', '/login')
       setNoticeType('success')
@@ -1143,14 +5345,210 @@ function App() {
 
   const isAuthenticated = session.status === 'authenticated'
 
+  const handleNotificationReceived = useCallback((notification) => {
+    if (notification.read_at || seenNotificationIdsRef.current.has(notification.id)) {
+      return
+    }
+    seenNotificationIdsRef.current.add(notification.id)
+    unreadNotificationIdsRef.current.add(notification.id)
+    setUnreadNotificationsCount(unreadNotificationIdsRef.current.size)
+    if (notificationBootstrapRef.current) return
+    notificationListenersRef.current.forEach((listener) => listener(notification))
+    setLiveToast({
+      id: notification.id,
+      message: notification.message,
+      type: notification.type,
+    })
+  }, [])
+
+  useNotifications({
+    enabled: isAuthenticated,
+    tokens: session.tokens,
+    onNotificationReceived: handleNotificationReceived,
+    onSessionExpired: handleSessionExpired,
+    onTokensChanged: handleTokensChanged,
+  })
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined
+
+    let cancelled = false
+    async function loadInitialUnread() {
+      try {
+        const result = await listNotifications({
+          tokens: session.tokens,
+          context: 'all',
+        })
+        if (!cancelled && validateNotificationList(result.data)) {
+          if (result.tokens.access_token !== session.tokens.access_token) {
+            handleTokensChanged(result.tokens)
+          }
+          syncUnreadNotifications(result.data)
+        }
+      } catch (error) {
+        if (!cancelled && error instanceof SessionExpiredError) {
+          handleSessionExpired(error.message)
+        }
+      } finally {
+        if (!cancelled) notificationBootstrapRef.current = false
+      }
+    }
+
+    loadInitialUnread()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    handleSessionExpired,
+    handleTokensChanged,
+    isAuthenticated,
+    session.tokens,
+    syncUnreadNotifications,
+  ])
+
+  useEffect(() => {
+    if (!liveToast) return undefined
+    const timer = window.setTimeout(() => setLiveToast(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [liveToast])
+
+  const eventMetadata = useEventMetadata({
+    enabled: isAuthenticated,
+    tokens: session.tokens,
+    onSessionExpired: handleSessionExpired,
+    onTokensChanged: handleTokensChanged,
+  })
+  const claims = isAuthenticated
+    ? getAccessTokenClaims(session.tokens.access_token)
+    : null
+  const tokenRole = typeof claims?.role === 'string' ? claims.role : 'attendee'
+  const role = currentUser?.role || tokenRole
+  const currentUserId = typeof claims?.sub === 'string' ? claims.sub : null
+  const isAdminPage = ['users', 'logs'].includes(appPage)
+  const isReviewPage = appPage === 'reviews'
+  const isEventBookingsPage = appPage === 'event-bookings'
+  const isRestrictedPage =
+    (isAdminPage && role !== 'admin') ||
+    ((isReviewPage || isEventBookingsPage) &&
+      !['organizer', 'admin'].includes(role))
+  const resolvedPage = isRestrictedPage ? 'events' : appPage
+
+  function handleEventCreated(event) {
+    setCreateEventOpen(false)
+    setAppPage('events')
+    setEventReloadVersion((version) => version + 1)
+    setAppNotice(`${event.title} was created and published.`)
+    window.history.pushState({}, '', '/events')
+  }
+
+  function handleProfileUpdated(updatedUser) {
+    setCurrentUser(updatedUser)
+    setAppNotice('Your profile was updated.')
+  }
+
+  useEffect(() => {
+    if (isAuthenticated && resolvedPage !== appPage) {
+      window.history.replaceState({}, '', `/${resolvedPage}`)
+    }
+  }, [appPage, isAuthenticated, resolvedPage])
+
   if (isAuthenticated) {
+    const pageProps = {
+      tokens: session.tokens,
+      onSessionExpired: handleSessionExpired,
+      onTokensChanged: handleTokensChanged,
+    }
+    const pageContent = {
+      events: (
+        <EventsPage
+          {...pageProps}
+          metadata={eventMetadata}
+          currentUserId={currentUserId}
+          role={role}
+          key={`${eventReloadVersion}-${role}`}
+        />
+      ),
+      bookings: <BookingsPage {...pageProps} />,
+      'event-bookings': <OrganizedEventBookingsPage {...pageProps} />,
+      reviews: <ReviewsPage {...pageProps} role={role} />,
+      notifications: (
+        <NotificationsPage
+          {...pageProps}
+          onNotificationRead={handleNotificationRead}
+          onAllNotificationsRead={handleAllNotificationsRead}
+          subscribeToNotifications={subscribeToNotifications}
+        />
+      ),
+      users: <UsersPage {...pageProps} />,
+      logs: <LogsPage {...pageProps} />,
+    }[resolvedPage]
+
     return (
-      <EventsPage
-        tokens={session.tokens}
+      <ApplicationShell
+        role={role}
+        profile={currentUser}
+        currentPage={resolvedPage}
+        onNavigate={handleAppNavigate}
+        onCreateEvent={() => setCreateEventOpen(true)}
+        onOpenProfile={() => setProfileOpen(true)}
         onLogout={handleLogout}
         loggingOut={loggingOut}
-        onSessionExpired={handleSessionExpired}
-      />
+        unreadNotificationsCount={unreadNotificationsCount}
+      >
+        {appNotice && <div className="app-toast" role="status">✓ {appNotice}</div>}
+        {liveToast && (
+          <div className="notification-toast" role="status">
+            <div className="notification-toast-content">
+              <span className="notification-toast-icon">🔔</span>
+              <div>
+                <strong>{formatNotificationType(liveToast.type)}</strong>
+                <p>{liveToast.message}</p>
+              </div>
+            </div>
+            <button
+              className="notification-toast-view"
+              type="button"
+              onClick={() => {
+                setLiveToast(null)
+                handleAppNavigate('notifications')
+              }}
+            >
+              View
+            </button>
+            <button
+              className="notification-toast-close"
+              type="button"
+              onClick={() => setLiveToast(null)}
+              aria-label="Dismiss notification toast"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {pageContent}
+        {createEventOpen && ['organizer', 'admin'].includes(role) && (
+          <CreateEventModal
+            tokens={session.tokens}
+            onClose={() => setCreateEventOpen(false)}
+            onCreated={handleEventCreated}
+            onSessionExpired={handleSessionExpired}
+            onTokensChanged={handleTokensChanged}
+            metadata={eventMetadata}
+          />
+        )}
+        {profileOpen && (
+          <ProfileModal
+            tokens={session.tokens}
+            profile={currentUser}
+            role={role}
+            onClose={() => setProfileOpen(false)}
+            onUpdated={handleProfileUpdated}
+            onPasswordChanged={handlePasswordChanged}
+            onSessionExpired={handleSessionExpired}
+            onTokensChanged={handleTokensChanged}
+          />
+        )}
+      </ApplicationShell>
     )
   }
 

@@ -4,10 +4,69 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models.enums import BookingStatus
+from app.models.enums import BookingStatus, EventStatus
 from app.models.user import User
 from app.repositories import review as review_repository
-from app.schemas.review import ReviewCreate, ReviewResponse, ReviewUpdate
+from app.schemas.reply import ReplyResponse
+from app.schemas.review import (
+    EventReviewsResponse,
+    ManagedReviewResponse,
+    ReviewCreate,
+    ReviewResponse,
+    ReviewUpdate,
+)
+
+
+async def list_event_reviews(
+    session: AsyncSession,
+    current_user: User,
+    *,
+    can_view_any: bool,
+) -> list[EventReviewsResponse]:
+    """Group visible Reviews under the Event to which they belong."""
+
+    reviews = await review_repository.list_manageable_reviews(
+        session,
+        organizer_id=None if can_view_any else current_user.id,
+    )
+    groups: dict[UUID, EventReviewsResponse] = {}
+
+    for review in reviews:
+        booking = review.booking
+        event = booking.event
+        group = groups.get(event.id)
+        if group is None:
+            group = EventReviewsResponse(
+                event_id=event.id,
+                event_title=event.title,
+                event_status=event.status,
+                organizer_id=event.organizer_id,
+                organizer_name=event.organizer.name,
+                reviews=[],
+            )
+            groups[event.id] = group
+
+        group.reviews.append(
+            ManagedReviewResponse(
+                id=review.id,
+                booking_id=review.booking_id,
+                rating=review.rating,
+                comment=review.comment,
+                created_at=review.created_at,
+                updated_at=review.updated_at,
+                reviewer_id=booking.user_id,
+                reviewer_name=booking.user.name,
+                replies=[
+                    ReplyResponse.model_validate(reply)
+                    for reply in sorted(
+                        review.replies,
+                        key=lambda item: (item.created_at, str(item.id)),
+                    )
+                ],
+            )
+        )
+
+    return list(groups.values())
 
 
 async def create_review(
@@ -37,6 +96,11 @@ async def create_review(
                 "The event for this booking does not exist."
             )
 
+        if event.status is not EventStatus.COMPLETED:
+            raise ConflictError(
+                "Reviews can only be left after the event has been completed."
+            )
+
         existing_review = await review_repository.get_review_by_booking_id(
             session,
             booking.id,
@@ -52,7 +116,7 @@ async def create_review(
             rating=request.rating,
             comment=request.comment,
         )
-        await review_repository.flush_review(session, review)
+        await session.flush([review])
 
         response = ReviewResponse.model_validate(review)
 
@@ -76,7 +140,6 @@ async def update_review(
     review_id: UUID,
     request: ReviewUpdate,
     *,
-    can_update_own: bool,
     can_update_any: bool,
 ) -> ReviewResponse:
     try:
@@ -86,10 +149,7 @@ async def update_review(
         if review is None:
             raise NotFoundError("The selected review does not exist.")
 
-        if not can_update_any and (
-            not can_update_own
-            or review.booking.user_id != current_user.id
-        ):
+        if not can_update_any and review.booking.user_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to edit this review."
             )
@@ -99,7 +159,7 @@ async def update_review(
             rating=changes.get("rating"),
             comment=changes.get("comment"),
         )
-        await review_repository.flush_review(session, review)
+        await session.flush([review])
         await review_repository.refresh_review(session, review)
 
         response = ReviewResponse.model_validate(review)
@@ -116,7 +176,6 @@ async def delete_review(
     current_user: User,
     review_id: UUID,
     *,
-    can_delete_own: bool,
     can_delete_any: bool,
 ) -> None:
     try:
@@ -124,16 +183,13 @@ async def delete_review(
         if review is None:
             raise NotFoundError("The selected review does not exist.")
 
-        if not can_delete_any and (
-            not can_delete_own
-            or review.booking.user_id != current_user.id
-        ):
+        if not can_delete_any and review.booking.user_id != current_user.id:
             raise ForbiddenError(
                 "You do not have permission to delete this review."
             )
 
         await review_repository.delete_review(session, review)
-        await review_repository.flush_review(session, review)
+        await session.flush([review])
 
         await session.commit()
     except Exception:

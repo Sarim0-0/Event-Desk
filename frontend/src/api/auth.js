@@ -27,7 +27,8 @@ export async function request(
   })
 
   const contentType = response.headers.get('content-type') || ''
-  const payload = contentType.includes('application/json')
+  const hasNoContent = [204, 205].includes(response.status)
+  const payload = !hasNoContent && contentType.includes('application/json')
     ? await response.json()
     : null
 

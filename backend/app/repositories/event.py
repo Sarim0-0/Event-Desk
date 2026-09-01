@@ -48,6 +48,49 @@ def _visible_event_conditions(
     return tuple(conditions)
 
 
+def _draft_event_conditions(
+    *,
+    organizer_id: UUID | None,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> tuple[ColumnElement[bool], ...]:
+    conditions: list[ColumnElement[bool]] = [
+        Event.status == EventStatus.DRAFT,
+        Event.deleted_at.is_(None),
+    ]
+
+    if organizer_id is not None:
+        conditions.append(Event.organizer_id == organizer_id)
+    if category_id is not None:
+        conditions.append(Event.category_id == category_id)
+
+    conditions.extend(
+        Event.event_tags.any(EventTag.tag_id == tag_id)
+        for tag_id in tag_ids
+    )
+    return tuple(conditions)
+
+
+def _completed_event_conditions(
+    *,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> tuple[ColumnElement[bool], ...]:
+    conditions: list[ColumnElement[bool]] = [
+        Event.status == EventStatus.COMPLETED,
+        Event.deleted_at.is_(None),
+    ]
+
+    if category_id is not None:
+        conditions.append(Event.category_id == category_id)
+
+    conditions.extend(
+        Event.event_tags.any(EventTag.tag_id == tag_id)
+        for tag_id in tag_ids
+    )
+    return tuple(conditions)
+
+
 async def count_visible_events(
     session: AsyncSession,
     *,
@@ -74,6 +117,7 @@ async def list_visible_events(
         select(Event)
         .options(
             selectinload(Event.category),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(
@@ -83,6 +127,96 @@ async def list_visible_events(
             )
         )
         .order_by(Event.event_datetime, Event.id)
+        .offset((page - 1) * _EVENTS_PER_PAGE)
+        .limit(_EVENTS_PER_PAGE)
+    )
+    events = await session.scalars(statement)
+    return list(events.all())
+
+
+async def count_draft_events(
+    session: AsyncSession,
+    *,
+    organizer_id: UUID | None,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> int:
+    statement = select(func.count(Event.id)).where(
+        *_draft_event_conditions(
+            organizer_id=organizer_id,
+            category_id=category_id,
+            tag_ids=tag_ids,
+        )
+    )
+    return int(await session.scalar(statement) or 0)
+
+
+async def list_draft_events(
+    session: AsyncSession,
+    *,
+    page: int,
+    organizer_id: UUID | None,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> list[Event]:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.organizer),
+            selectinload(Event.tags),
+        )
+        .where(
+            *_draft_event_conditions(
+                organizer_id=organizer_id,
+                category_id=category_id,
+                tag_ids=tag_ids,
+            )
+        )
+        .order_by(Event.event_datetime, Event.id)
+        .offset((page - 1) * _EVENTS_PER_PAGE)
+        .limit(_EVENTS_PER_PAGE)
+    )
+    events = await session.scalars(statement)
+    return list(events.all())
+
+
+async def count_completed_events(
+    session: AsyncSession,
+    *,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> int:
+    statement = select(func.count(Event.id)).where(
+        *_completed_event_conditions(
+            category_id=category_id,
+            tag_ids=tag_ids,
+        )
+    )
+    return int(await session.scalar(statement) or 0)
+
+
+async def list_completed_events(
+    session: AsyncSession,
+    *,
+    page: int,
+    category_id: UUID | None,
+    tag_ids: Collection[UUID],
+) -> list[Event]:
+    statement = (
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.organizer),
+            selectinload(Event.tags),
+        )
+        .where(
+            *_completed_event_conditions(
+                category_id=category_id,
+                tag_ids=tag_ids,
+            )
+        )
+        .order_by(Event.event_datetime.desc(), Event.id.desc())
         .offset((page - 1) * _EVENTS_PER_PAGE)
         .limit(_EVENTS_PER_PAGE)
     )
@@ -120,6 +254,7 @@ async def get_event_for_update(
         .options(
             selectinload(Event.category),
             selectinload(Event.event_tags),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(
@@ -140,6 +275,7 @@ async def get_event_for_cancellation_for_update(
         .options(
             selectinload(Event.category),
             selectinload(Event.event_tags),
+            selectinload(Event.organizer),
             selectinload(Event.tags),
         )
         .where(Event.id == event_id)
@@ -179,6 +315,15 @@ async def get_category_by_id(
     return await session.get(Category, category_id)
 
 
+async def list_categories(session: AsyncSession) -> list[Category]:
+    statement = select(Category).order_by(
+        func.lower(Category.name),
+        Category.id,
+    )
+    categories = await session.scalars(statement)
+    return list(categories.all())
+
+
 async def get_tags_by_ids(
     session: AsyncSession,
     tag_ids: Collection[UUID],
@@ -189,6 +334,15 @@ async def get_tags_by_ids(
     statement = select(Tag).where(Tag.id.in_(tag_ids))
     result = await session.scalars(statement)
     return list(result.all())
+
+
+async def list_tags(session: AsyncSession) -> list[Tag]:
+    statement = select(Tag).order_by(
+        func.lower(Tag.name),
+        Tag.id,
+    )
+    tags = await session.scalars(statement)
+    return list(tags.all())
 
 
 def update_event(
@@ -230,12 +384,6 @@ def reset_event_reminder(event: Event) -> Event:
 
     event.reminder_sent_at = None
     return event
-
-
-async def flush_event(
-    session: AsyncSession,
-) -> None:
-    await session.flush()
 
 
 async def refresh_event(
