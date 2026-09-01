@@ -212,5 +212,8 @@ async def cancel_event_endpoint(
     background_tasks.add_task(
         create_event_cancellation_notifications_in_background,
         event_id=event.id,
+        cancelled_by_admin=(
+            can_cancel_any and event.organizer_id != current_user.id
+        ),
     )
     return event

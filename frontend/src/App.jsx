@@ -5002,6 +5002,11 @@ function NotificationsPage({
           {notifications.map((notification) => {
             const isUnread = !notification.read_at
             const isItemActionLoading = actionLoading === notification.id
+            const isOrganizerCancellation = (
+              notification.type === 'event_cancelled' &&
+              !notification.related_booking_id &&
+              !notification.related_review_id
+            )
 
             return (
               <article
@@ -5015,7 +5020,9 @@ function NotificationsPage({
                   <div className="notification-top">
                     <div className="notification-type-wrap">
                       <span className={`notification-badge-pill pill-${notification.type}`}>
-                        {formatNotificationType(notification.type)}
+                        {isOrganizerCancellation
+                          ? 'Cancelled by admin'
+                          : formatNotificationType(notification.type)}
                       </span>
                       {isUnread && <span className="unread-dot" title="Unread" />}
                     </div>
@@ -5035,6 +5042,7 @@ function NotificationsPage({
                         Review #{shortId(notification.related_review_id)}
                       </small>
                     )}
+                    {isOrganizerCancellation && <small>Your event</small>}
                   </div>
                 </div>
                 <div className="notification-actions">

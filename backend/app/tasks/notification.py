@@ -46,6 +46,7 @@ async def create_notification_in_background(
 async def create_event_cancellation_notifications_in_background(
     *,
     event_id: UUID,
+    cancelled_by_admin: bool = False,
 ) -> None:
     """Persist and deliver the distinct Event-cancellation Notifications."""
 
@@ -54,6 +55,7 @@ async def create_event_cancellation_notifications_in_background(
             notifications = await create_event_cancellation_notifications(
                 session,
                 event_id=event_id,
+                cancelled_by_admin=cancelled_by_admin,
             )
 
         for notification in notifications:
